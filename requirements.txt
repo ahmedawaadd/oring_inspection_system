@@ -1,0 +1,11 @@
+# Core (always required)
+numpy>=1.26
+
+# Optional — hardware path only (not needed for stub mode)
+# Uncomment when deploying on the Pi with real hardware:
+# picamera2>=0.3
+# RPi.GPIO>=0.7
+# ultralytics>=8.0
+
+# Optional — enable PNG image saving in logger._write_image()
+# Pillow>=10.0
