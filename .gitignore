@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Runtime output
+logs/
+models/
+
+# Common dev artifacts
+.env
+*.egg-info/
+dist/
+build/
+.venv/
