@@ -15,7 +15,8 @@ from picamera2 import Picamera2
 PREVIEW_RESOLUTION = (1280, 960)  # live preview size (lower = faster refresh)
 CAPTURE_RESOLUTION = (4056, 3040) # IMX477 full res used for reference + inspect
 BLUR_KERNEL_SIZE   = (5, 5)       # Gaussian blur kernel (must be odd x odd)
-DIFF_THRESHOLD     = 10.0         # Mean pixel diff below this → PASS
+NOISE_THRESHOLD    = 30           # Per-pixel diff below this is ignored (filters sensor noise)
+DIFF_THRESHOLD     = 5.0          # Mean of surviving diff pixels below this → PASS
 
 REFERENCE_PATH = "reference.jpg"
 WINDOW_NAME    = "O-ring Inspection"
@@ -36,7 +37,7 @@ def preprocess(image):
 
 def compare(ref_proc, sample_proc):
     diff = cv2.absdiff(ref_proc, sample_proc)
-    _, thresh = cv2.threshold(diff, 0, 255, cv2.THRESH_BINARY)
+    _, thresh = cv2.threshold(diff, NOISE_THRESHOLD, 255, cv2.THRESH_BINARY)
     mean_diff = float(np.mean(thresh))
     return mean_diff < DIFF_THRESHOLD, mean_diff
 
