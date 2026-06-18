@@ -12,7 +12,6 @@ from picamera2 import Picamera2
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-GPIO_BUTTON_PIN = 17          # BCM pin number for trigger button
 CAMERA_RESOLUTION = (4056, 3040)  # IMX477 full resolution; reduce for speed
 BLUR_KERNEL_SIZE = (5, 5)     # Gaussian blur kernel (must be odd x odd)
 DIFF_THRESHOLD = 10.0         # Mean pixel diff below this → PASS
@@ -69,10 +68,7 @@ def run_reference():
 
 
 def run_inspect():
-    """Wait for button press, capture, compare, print PASS/FAIL, repeat."""
-    import RPi.GPIO as GPIO
-
-    # Load reference
+    """Wait for Enter key, capture, compare, print PASS/FAIL, repeat."""
     ref_image = cv2.imread(REFERENCE_PATH)
     if ref_image is None:
         print(f"ERROR: reference image not found at '{REFERENCE_PATH}'", file=sys.stderr)
@@ -80,19 +76,12 @@ def run_inspect():
         sys.exit(1)
 
     ref_proc = preprocess(ref_image)
-
-    # GPIO setup
-    GPIO.setmode(GPIO.BCM)
-    GPIO.setup(GPIO_BUTTON_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-
     cam = setup_camera()
-    print(f"Ready. Press button (GPIO {GPIO_BUTTON_PIN}) to inspect. Ctrl-C to quit.")
+    print("Ready. Press Enter to inspect. Ctrl-C to quit.")
 
     try:
         while True:
-            # Block until button pressed (active-low with pull-up)
-            GPIO.wait_for_edge(GPIO_BUTTON_PIN, GPIO.FALLING)
-            time.sleep(0.05)  # debounce
+            input()  # block until Enter
 
             image = capture_image(cam)
             sample_proc = preprocess(image)
@@ -105,7 +94,6 @@ def run_inspect():
         print("\nStopping.")
     finally:
         cam.stop()
-        GPIO.cleanup()
 
 
 def main():
