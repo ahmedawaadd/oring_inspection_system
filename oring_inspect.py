@@ -19,8 +19,8 @@ BLUR_KERNEL_SIZE   = (5, 5)        # Gaussian blur kernel (must be odd x odd)
 DEFAULT_NOISE_THRESHOLD = 30   # per-pixel diff below this is ignored (0–100)
 DEFAULT_DIFF_THRESHOLD  = 50   # mean of surviving pixels × 10 → 5.0 (0–500 → 0.0–50.0)
 
-REFERENCE_PATH = "reference.jpg"
-WINDOW_NAME    = "O-ring Inspection"
+REFERENCE_PATHS = ["reference_1.jpg", "reference_2.jpg"]
+WINDOW_NAME     = "O-ring Inspection"
 # ---------------------------------------------------------------------------
 
 # Colours (BGR)
@@ -44,6 +44,20 @@ def compare(ref_proc, sample_proc, noise_thresh, diff_thresh):
     return mean_diff < diff_thresh, mean_diff
 
 
+def compare_against_all(refs, sample_proc, noise_thresh, diff_thresh):
+    """PASS if sample matches any loaded reference. Returns (passed, best_diff, matched_slot)."""
+    best_diff  = None
+    best_slot  = None
+    for slot, ref_proc in refs.items():
+        passed, diff_val = compare(ref_proc, sample_proc, noise_thresh, diff_thresh)
+        if best_diff is None or diff_val < best_diff:
+            best_diff = diff_val
+            best_slot = slot
+        if passed:
+            return True, diff_val, slot
+    return False, best_diff, best_slot
+
+
 def capture_still(cam):
     """Switch to full-res still, capture, return BGR image, resume preview."""
     cam.stop()
@@ -62,29 +76,33 @@ def capture_still(cam):
     return bgr
 
 
-def draw_overlay(frame, ref_loaded, live_result):
+def draw_overlay(frame, refs, live_result):
     h, w = frame.shape[:2]
-    bar_h = 64
+    bar_h = 80
 
-    # Semi-transparent bottom bar
     roi = frame[h - bar_h:h, :]
     roi[:] = (roi * 0.4).astype(np.uint8)
 
-    controls = "R: Save reference    SPACE: Inspect    Q: Quit"
-    cv2.putText(frame, controls, (10, h - bar_h + 22),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.55, WHITE, 1, cv2.LINE_AA)
+    controls = "1: Save Ref 1    2: Save Ref 2    SPACE: Inspect    Q: Quit"
+    cv2.putText(frame, controls, (10, h - bar_h + 20),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.52, WHITE, 1, cv2.LINE_AA)
 
-    ref_text  = "Reference: LOADED" if ref_loaded else "Reference: NONE — press R"
-    ref_color = GREEN if ref_loaded else YELLOW
-    cv2.putText(frame, ref_text, (10, h - bar_h + 48),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.55, ref_color, 1, cv2.LINE_AA)
+    # Reference slot status
+    for slot in [1, 2]:
+        loaded = slot in refs
+        text   = f"Ref {slot}: {'LOADED' if loaded else 'NONE'}"
+        color  = GREEN if loaded else YELLOW
+        x      = 10 if slot == 1 else 220
+        cv2.putText(frame, text, (x, h - bar_h + 46),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.52, color, 1, cv2.LINE_AA)
 
     if live_result:
-        result_str, diff_val = live_result
+        result_str, diff_val, matched_slot = live_result
         color = GREEN if result_str == "PASS" else RED
-        label = f"{result_str}  diff={diff_val:.1f}"
-        cv2.putText(frame, label, (w - 260, h - bar_h + 48),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2, cv2.LINE_AA)
+        match_label = f"vs Ref {matched_slot}" if matched_slot else ""
+        label = f"{result_str}  diff={diff_val:.1f}  {match_label}"
+        cv2.putText(frame, label, (10, h - bar_h + 68),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
 
     return frame
 
@@ -115,40 +133,41 @@ def main():
     # Sliders — DIFF_THRESHOLD stored ×10 so trackbar stays integer
     cv2.createTrackbar("Noise filter  (0-100)", WINDOW_NAME,
                        DEFAULT_NOISE_THRESHOLD, 100, lambda _: None)
-    cv2.createTrackbar("Diff threshold ×10 (0-500)", WINDOW_NAME,
+    cv2.createTrackbar("Diff threshold x10 (0-500)", WINDOW_NAME,
                        DEFAULT_DIFF_THRESHOLD, 500, lambda _: None)
 
-    # Load existing reference if present
-    ref_proc   = None
-    ref_loaded = False
-    if os.path.exists(REFERENCE_PATH):
-        ref_proc   = preprocess(cv2.imread(REFERENCE_PATH))
-        ref_loaded = True
-        print(f"Loaded existing reference from {REFERENCE_PATH}")
+    # Load any existing reference images on startup
+    refs = {}  # {1: preprocessed_array, 2: preprocessed_array}
+    for slot, path in enumerate(REFERENCE_PATHS, start=1):
+        if os.path.exists(path):
+            refs[slot] = preprocess(cv2.imread(path))
+            print(f"Loaded existing reference {slot} from {path}")
 
     sample_proc = None  # last captured inspect frame, kept for live slider feedback
-    live_result = None  # (result_str, diff_val) recomputed every frame
+    live_result = None  # (result_str, diff_val, matched_slot)
 
     print("Live preview open.")
-    print("  R     → save reference image")
-    print("  SPACE → inspect against reference")
+    print("  1     → save Reference 1")
+    print("  2     → save Reference 2")
+    print("  SPACE → inspect (PASS if matches either reference)")
     print("  Q     → quit")
-    print("  Drag sliders to tune sensitivity live after capturing an inspect frame.")
+    print("  Drag sliders to tune sensitivity live after an inspect capture.")
 
     try:
         while True:
-            # Read slider values
             noise_thresh = cv2.getTrackbarPos("Noise filter  (0-100)", WINDOW_NAME)
-            diff_thresh  = cv2.getTrackbarPos("Diff threshold ×10 (0-500)", WINDOW_NAME) / 10.0
+            diff_thresh  = cv2.getTrackbarPos("Diff threshold x10 (0-500)", WINDOW_NAME) / 10.0
 
-            # Recompute result live whenever sliders move (no re-capture needed)
-            if ref_proc is not None and sample_proc is not None:
-                passed, diff_val = compare(ref_proc, sample_proc, noise_thresh, diff_thresh)
-                live_result = ("PASS" if passed else "FAIL", diff_val)
+            # Recompute live whenever sliders change (no re-capture needed)
+            if refs and sample_proc is not None:
+                passed, diff_val, slot = compare_against_all(
+                    refs, sample_proc, noise_thresh, diff_thresh
+                )
+                live_result = ("PASS" if passed else "FAIL", diff_val, slot)
 
             frame   = cam.capture_array()
             frame   = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            display = draw_overlay(frame.copy(), ref_loaded, live_result)
+            display = draw_overlay(frame.copy(), refs, live_result)
             cv2.imshow(WINDOW_NAME, display)
 
             key = cv2.waitKey(1) & 0xFF
@@ -156,27 +175,30 @@ def main():
             if key == ord('q'):
                 break
 
-            elif key == ord('r'):
-                print("Capturing reference…")
+            elif key in (ord('1'), ord('2')):
+                slot = int(chr(key))
+                path = REFERENCE_PATHS[slot - 1]
+                print(f"Capturing reference {slot}…")
                 still      = capture_still(cam)
-                cv2.imwrite(REFERENCE_PATH, still)
-                ref_proc   = preprocess(still)
-                ref_loaded = True
+                cv2.imwrite(path, still)
+                refs[slot] = preprocess(still)
                 sample_proc = None
                 live_result = None
-                print(f"Reference saved to {REFERENCE_PATH}")
+                print(f"Reference {slot} saved to {path}")
 
             elif key == ord(' '):
-                if not ref_loaded:
-                    print("No reference loaded — press R first.")
+                if not refs:
+                    print("No references loaded — press 1 or 2 first.")
                     continue
                 print("Inspecting…")
                 still       = capture_still(cam)
                 sample_proc = preprocess(still)
-                passed, diff_val = compare(ref_proc, sample_proc, noise_thresh, diff_thresh)
-                live_result = ("PASS" if passed else "FAIL", diff_val)
-                print(f"{live_result[0]}  (diff={diff_val:.1f}  "
-                      f"noise_thresh={noise_thresh}  diff_thresh={diff_thresh:.1f})")
+                passed, diff_val, slot = compare_against_all(
+                    refs, sample_proc, noise_thresh, diff_thresh
+                )
+                live_result = ("PASS" if passed else "FAIL", diff_val, slot)
+                print(f"{live_result[0]}  (diff={diff_val:.1f}  best_ref={slot}  "
+                      f"noise={noise_thresh}  threshold={diff_thresh:.1f})")
                 flash_result(display, passed)
 
     finally:
