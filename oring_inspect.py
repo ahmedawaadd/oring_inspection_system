@@ -101,13 +101,16 @@ def compare(ref_proc, sample_proc, noise_thresh, diff_thresh):
     return mean_diff < diff_thresh, mean_diff
 
 
+WARMUP_FRAMES = 3   # throwaway frames to let exposure/WB settle after mode switch
+
 def capture_still(cam):
     cam.stop()
     cam.configure(cam.create_still_configuration(
         main={"size": CAPTURE_RESOLUTION, "format": "RGB888"}
     ))
     cam.start()
-    time.sleep(0.5)
+    for _ in range(WARMUP_FRAMES):
+        cam.capture_array()
     bgr = cv2.cvtColor(cam.capture_array(), cv2.COLOR_RGB2BGR)
     cam.stop()
     cam.configure(cam.create_video_configuration(
