@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """O-ring inspection script for Raspberry Pi 5 + Pi HQ Camera (IMX477)."""
 
+import csv
 import os
 import time
+from datetime import datetime
 
 import cv2
 import numpy as np
@@ -21,6 +23,7 @@ DEFAULT_DIFF_THRESHOLD  = 50   # stored ×10; divide by 10 for actual value (0�
 REFERENCE_PATHS = ["reference_1.jpg", "reference_2.jpg"]
 ROI_PATHS       = ["roi_1.npy", "roi_2.npy"]   # persist crop coords across runs
 WINDOW_NAME     = "O-ring Inspection"
+LOGS_DIR        = "inspections"
 # ---------------------------------------------------------------------------
 
 SCALE_X = CAPTURE_RESOLUTION[0] / PREVIEW_RESOLUTION[0]
@@ -124,7 +127,7 @@ def capture_still(cam):
 # Overlay drawing
 # ---------------------------------------------------------------------------
 
-def draw_overlay(frame, rois, refs, live_results):
+def draw_overlay(frame, rois, refs, live_results, barcode=None):
     h, w = frame.shape[:2]
 
     # Draw saved ROI boxes on live feed
@@ -146,12 +149,16 @@ def draw_overlay(frame, rois, refs, live_results):
     roi_region = frame[h - bar_h:h, :]
     roi_region[:] = (roi_region * 0.35).astype(np.uint8)
 
+    if barcode is not None:
+        cv2.putText(frame, f"Barcode: {barcode}", (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, WHITE, 2, cv2.LINE_AA)
+
     if mouse["active_slot"] is not None:
         hint = f"Drawing Ref {mouse['active_slot']} — click and drag, release to confirm"
         cv2.putText(frame, hint, (10, h - bar_h + 22),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, YELLOW, 1, cv2.LINE_AA)
     else:
-        controls = "1/2: Draw reference region    SPACE: Inspect    Q: Quit"
+        controls = "1/2: Draw ref    SPACE: Inspect    B: New barcode    Q: Quit"
         cv2.putText(frame, controls, (10, h - bar_h + 22),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, WHITE, 1, cv2.LINE_AA)
 
@@ -209,6 +216,53 @@ def flash_result(frame, passed, per_slot):
 
 
 # ---------------------------------------------------------------------------
+# Barcode + logging
+# ---------------------------------------------------------------------------
+
+def prompt_barcode():
+    while True:
+        raw = input("Enter barcode (1–100): ").strip()
+        if raw.isdigit() and 1 <= int(raw) <= 100:
+            return int(raw)
+        print("  Invalid — enter a whole number between 1 and 100.")
+
+
+def save_inspection(barcode, frame, per_slot, overall_passed):
+    folder = os.path.join(LOGS_DIR, str(barcode))
+    os.makedirs(folder, exist_ok=True)
+
+    ts      = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    verdict = "PASS" if overall_passed else "FAIL"
+    color   = GREEN if overall_passed else RED
+
+    # Stamp barcode + verdict clearly on the saved image
+    out = frame.copy()
+    cv2.putText(out, f"#{barcode}  {verdict}", (10, 40),
+                cv2.FONT_HERSHEY_DUPLEX, 1.2, color, 3, cv2.LINE_AA)
+
+    img_path = os.path.join(folder, f"{ts}_{verdict}.jpg")
+    cv2.imwrite(img_path, out)
+
+    log_path    = os.path.join(folder, "log.csv")
+    write_header = not os.path.exists(log_path)
+    with open(log_path, "a", newline="") as f:
+        writer = csv.writer(f)
+        if write_header:
+            writer.writerow(["timestamp", "barcode", "overall",
+                             "slot1", "slot1_diff", "slot2", "slot2_diff"])
+        row = [ts, barcode, verdict]
+        for slot in [1, 2]:
+            if slot in per_slot:
+                p, d = per_slot[slot]
+                row += ["PASS" if p else "FAIL", f"{d:.1f}"]
+            else:
+                row += ["N/A", "N/A"]
+        writer.writerow(row)
+
+    print(f"Saved → {img_path}")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -246,9 +300,12 @@ def main():
     sample_crops = {}  # {slot: preprocessed crop} from last inspect
     live_results = {}  # {slot: (passed, diff_val)}
 
+    current_barcode = prompt_barcode()
+
     print("Live preview open.")
     print("  1 / 2 → click and drag to define reference region for O-ring 1 / 2")
     print("  SPACE → inspect both regions independently")
+    print("  B     → enter a new barcode")
     print("  Q     → quit")
 
     try:
@@ -287,13 +344,17 @@ def main():
 
             frame   = cam.capture_array()
             frame   = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            display = draw_overlay(frame.copy(), rois, refs, live_results)
+            display = draw_overlay(frame.copy(), rois, refs, live_results, current_barcode)
             cv2.imshow(WINDOW_NAME, display)
 
             key = cv2.waitKey(1) & 0xFF
 
             if key == ord('q'):
                 break
+
+            elif key == ord('b'):
+                current_barcode = prompt_barcode()
+                print(f"Barcode set to {current_barcode}")
 
             elif key in (ord('1'), ord('2')):
                 slot = int(chr(key))
@@ -326,6 +387,7 @@ def main():
                     print(f"  Ref {slot}: {'PASS' if passed else 'FAIL'}  diff={diff_val:.1f}")
                 print(f"Overall: {'PASS' if overall_passed else 'FAIL'}"
                       f"  (noise={noise_thresh}  threshold={diff_thresh:.1f})")
+                save_inspection(current_barcode, display, per_slot, overall_passed)
                 flash_result(display, overall_passed, per_slot)
 
     finally:
