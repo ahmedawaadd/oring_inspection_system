@@ -26,9 +26,6 @@ WINDOW_NAME     = "O-ring Inspection"
 LOGS_DIR        = "inspections"
 # ---------------------------------------------------------------------------
 
-SCALE_X = CAPTURE_RESOLUTION[0] / PREVIEW_RESOLUTION[0]
-SCALE_Y = CAPTURE_RESOLUTION[1] / PREVIEW_RESOLUTION[1]
-
 # Colours (BGR)
 GREEN  = (0, 220, 0)
 RED    = (0, 0, 220)
@@ -76,12 +73,6 @@ def normalise_rect(pt1, pt2):
     x1, y1 = min(pt1[0], pt2[0]), min(pt1[1], pt2[1])
     x2, y2 = max(pt1[0], pt2[0]), max(pt1[1], pt2[1])
     return x1, y1, x2, y2
-
-
-def scale_roi(roi, scale_x=SCALE_X, scale_y=SCALE_Y):
-    x1, y1, x2, y2 = roi
-    return (int(x1 * scale_x), int(y1 * scale_y),
-            int(x2 * scale_x), int(y2 * scale_y))
 
 
 def crop(image, roi):
@@ -321,9 +312,9 @@ def main():
                 # Ignore tiny accidental clicks
                 if (roi_preview[2] - roi_preview[0]) > 10 and (roi_preview[3] - roi_preview[1]) > 10:
                     print(f"Capturing reference {slot}…")
-                    still     = capture_still(cam)
-                    roi_full  = scale_roi(roi_preview)
-                    ref_crop  = crop(still, roi_full)
+                    still      = capture_still(cam)
+                    still_small = cv2.resize(still, PREVIEW_RESOLUTION)
+                    ref_crop   = crop(still_small, roi_preview)
                     cv2.imwrite(REFERENCE_PATHS[slot - 1], ref_crop)
                     np.save(ROI_PATHS[slot - 1], np.array(roi_preview))
                     rois[slot]        = roi_preview
@@ -370,12 +361,12 @@ def main():
                     continue
 
                 print("Inspecting…")
-                still = capture_still(cam)
+                still       = capture_still(cam)
+                still_small = cv2.resize(still, PREVIEW_RESOLUTION)
 
                 per_slot = {}
                 for slot, ref_proc in active_refs.items():
-                    roi_full     = scale_roi(rois[slot])
-                    sample_crop  = preprocess(crop(still, roi_full))
+                    sample_crop  = preprocess(crop(still_small, rois[slot]))
                     sample_crops[slot] = sample_crop
                     passed, diff_val   = compare(ref_proc, sample_crop,
                                                  noise_thresh, diff_thresh)
