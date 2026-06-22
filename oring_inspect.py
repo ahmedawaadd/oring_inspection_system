@@ -13,8 +13,7 @@ from picamera2 import Picamera2
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-PREVIEW_RESOLUTION = (1280, 960)   # live preview size (lower = faster refresh)
-CAPTURE_RESOLUTION = (4056, 3040)  # IMX477 full res used for reference + inspect
+PREVIEW_RESOLUTION = (1280, 960)   # camera resolution for both preview and capture
 BLUR_KERNEL_SIZE   = (5, 5)        # Gaussian blur kernel (must be odd x odd)
 
 DEFAULT_NOISE_THRESHOLD = 30   # per-pixel diff below this is ignored (0–100)
@@ -95,23 +94,8 @@ def compare(ref_proc, sample_proc, noise_thresh, diff_thresh):
     return mean_diff < diff_thresh, mean_diff
 
 
-WARMUP_FRAMES = 3   # throwaway frames to let exposure/WB settle after mode switch
-
 def capture_still(cam):
-    cam.stop()
-    cam.configure(cam.create_still_configuration(
-        main={"size": CAPTURE_RESOLUTION, "format": "RGB888"}
-    ))
-    cam.start()
-    for _ in range(WARMUP_FRAMES):
-        cam.capture_array()
-    bgr = cv2.cvtColor(cam.capture_array(), cv2.COLOR_RGB2BGR)
-    cam.stop()
-    cam.configure(cam.create_video_configuration(
-        main={"size": PREVIEW_RESOLUTION, "format": "RGB888"}
-    ))
-    cam.start()
-    return bgr
+    return cv2.cvtColor(cam.capture_array(), cv2.COLOR_RGB2BGR)
 
 
 # ---------------------------------------------------------------------------
@@ -312,9 +296,8 @@ def main():
                 # Ignore tiny accidental clicks
                 if (roi_preview[2] - roi_preview[0]) > 10 and (roi_preview[3] - roi_preview[1]) > 10:
                     print(f"Capturing reference {slot}…")
-                    still      = capture_still(cam)
-                    still_small = cv2.resize(still, PREVIEW_RESOLUTION)
-                    ref_crop   = crop(still_small, roi_preview)
+                    still    = capture_still(cam)
+                    ref_crop = crop(still, roi_preview)
                     cv2.imwrite(REFERENCE_PATHS[slot - 1], ref_crop)
                     np.save(ROI_PATHS[slot - 1], np.array(roi_preview))
                     rois[slot]        = roi_preview
@@ -361,12 +344,11 @@ def main():
                     continue
 
                 print("Inspecting…")
-                still       = capture_still(cam)
-                still_small = cv2.resize(still, PREVIEW_RESOLUTION)
+                still = capture_still(cam)
 
                 per_slot = {}
                 for slot, ref_proc in active_refs.items():
-                    sample_crop  = preprocess(crop(still_small, rois[slot]))
+                    sample_crop = preprocess(crop(still, rois[slot]))
                     sample_crops[slot] = sample_crop
                     passed, diff_val   = compare(ref_proc, sample_crop,
                                                  noise_thresh, diff_thresh)
