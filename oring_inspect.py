@@ -13,37 +13,38 @@ from picamera2 import Picamera2
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-PREVIEW_RESOLUTION = (1280, 960)   # camera resolution for both preview and capture
-BLUR_KERNEL_SIZE   = (5, 5)        # Gaussian blur kernel (must be odd x odd)
+PREVIEW_RESOLUTION = (1280, 960)
+BLUR_KERNEL_SIZE   = (5, 5)
 
-DEFAULT_NOISE_THRESHOLD = 30   # per-pixel diff below this is ignored (0–100)
+DEFAULT_NOISE_THRESHOLD = 30
 DEFAULT_DIFF_THRESHOLD  = 50   # stored ×10; divide by 10 for actual value (0–50.0)
 
 REFERENCE_PATHS = ["reference_1.jpg", "reference_2.jpg"]
-ROI_PATHS       = ["roi_1.npy", "roi_2.npy"]   # persist crop coords across runs
+ROI_PATHS       = ["roi_1.npy",       "roi_2.npy"]
 WINDOW_NAME     = "O-ring Inspection"
 LOGS_DIR        = "inspections"
-# ---------------------------------------------------------------------------
 
+THUMB_W, THUMB_H = 110, 75   # reference image thumbnail size in bottom bar
+
+# ---------------------------------------------------------------------------
 # Colours (BGR)
-GREEN  = (0, 220, 0)
-RED    = (0, 0, 220)
-WHITE  = (255, 255, 255)
-BLACK  = (0, 0, 0)
-YELLOW = (0, 200, 220)
-CYAN   = (220, 220, 0)
-SLOT_COLORS = {1: (255, 180, 0), 2: (0, 180, 255)}  # blue-ish / orange-ish
-
+# ---------------------------------------------------------------------------
+GREEN       = ( 60, 200,  60)
+RED         = ( 50,  50, 220)
+WHITE       = (240, 240, 240)
+YELLOW      = ( 30, 200, 255)
+GRAY        = (130, 130, 130)
+SLOT_COLORS = {1: (200, 140,   0), 2: (0, 160, 240)}
 
 # ---------------------------------------------------------------------------
-# Mouse callback state (mutated in-place so the callback can share it)
+# Mouse state (mutated in-place so callback and main loop share it)
 # ---------------------------------------------------------------------------
 mouse = {
-    "active_slot": None,   # 1 or 2 while user is drawing
-    "drawing": False,
-    "pt1": (0, 0),
-    "pt2": (0, 0),
-    "roi_ready": False,    # set True on mouse-up so main loop can capture
+    "active_slot": None,
+    "drawing":     False,
+    "pt1":         (0, 0),
+    "pt2":         (0, 0),
+    "roi_ready":   False,
 }
 
 
@@ -51,16 +52,11 @@ def on_mouse(event, x, y, flags, param):
     if mouse["active_slot"] is None:
         return
     if event == cv2.EVENT_LBUTTONDOWN:
-        mouse["drawing"]   = True
-        mouse["roi_ready"] = False
-        mouse["pt1"]       = (x, y)
-        mouse["pt2"]       = (x, y)
+        mouse.update(drawing=True, roi_ready=False, pt1=(x, y), pt2=(x, y))
     elif event == cv2.EVENT_MOUSEMOVE and mouse["drawing"]:
         mouse["pt2"] = (x, y)
     elif event == cv2.EVENT_LBUTTONUP and mouse["drawing"]:
-        mouse["drawing"]   = False
-        mouse["pt2"]       = (x, y)
-        mouse["roi_ready"] = True
+        mouse.update(drawing=False, pt2=(x, y), roi_ready=True)
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +81,6 @@ def preprocess(image):
 
 
 def compare(ref_proc, sample_proc, noise_thresh, diff_thresh):
-    # Resize sample to match reference in case of sub-pixel coord differences
     if ref_proc.shape != sample_proc.shape:
         sample_proc = cv2.resize(sample_proc, (ref_proc.shape[1], ref_proc.shape[0]))
     diff = cv2.absdiff(ref_proc, sample_proc)
@@ -98,72 +93,161 @@ def capture_still(cam):
     return cv2.cvtColor(cam.capture_array(), cv2.COLOR_RGB2BGR)
 
 
+def load_thumb(path):
+    """Load an image file and return a THUMB_W × THUMB_H thumbnail, or None."""
+    if not os.path.exists(path):
+        return None
+    img = cv2.imread(path)
+    if img is None:
+        return None
+    return cv2.resize(img, (THUMB_W, THUMB_H), interpolation=cv2.INTER_AREA)
+
+
+# ---------------------------------------------------------------------------
+# UI helpers
+# ---------------------------------------------------------------------------
+
+def _dark_panel(frame, x1, y1, x2, y2, alpha=0.82):
+    """Blend a near-black panel over frame[y1:y2, x1:x2] in-place."""
+    region = frame[y1:y2, x1:x2]
+    dark   = np.full_like(region, (20, 20, 20))
+    cv2.addWeighted(dark, alpha, region, 1.0 - alpha, 0, region)
+    frame[y1:y2, x1:x2] = region
+
+
 # ---------------------------------------------------------------------------
 # Overlay drawing
 # ---------------------------------------------------------------------------
 
-def draw_overlay(frame, rois, refs, live_results, barcode=None):
+def draw_overlay(frame, rois, refs, live_results, thumbs, barcode,
+                 noise_thresh, diff_thresh):
     h, w = frame.shape[:2]
 
-    # Draw saved ROI boxes on live feed
+    # ── ROI boxes on live feed ────────────────────────────────────────────
     for slot, roi in rois.items():
         color = SLOT_COLORS[slot]
         x1, y1, x2, y2 = roi
         cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-        cv2.putText(frame, f"Ref {slot}", (x1 + 4, y1 + 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
+        cv2.putText(frame, f"Ref {slot}", (x1 + 4, y1 + 22),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.56, color, 2, cv2.LINE_AA)
 
-    # While user is actively drawing, show the live rubber-band box
     if mouse["active_slot"] is not None and (mouse["drawing"] or not mouse["roi_ready"]):
-        slot  = mouse["active_slot"]
-        color = SLOT_COLORS[slot]
-        cv2.rectangle(frame, mouse["pt1"], mouse["pt2"], color, 2)
+        cv2.rectangle(frame, mouse["pt1"], mouse["pt2"],
+                      SLOT_COLORS[mouse["active_slot"]], 2)
 
-    # Bottom status bar
-    bar_h = 90
-    roi_region = frame[h - bar_h:h, :]
-    roi_region[:] = (roi_region * 0.35).astype(np.uint8)
+    # ── Top bar (50 px) ───────────────────────────────────────────────────
+    _dark_panel(frame, 0, 0, w, 50)
 
-    if barcode is not None:
-        cv2.putText(frame, f"Barcode: {barcode}", (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, WHITE, 2, cv2.LINE_AA)
+    bc_text = f"BARCODE  #{barcode}" if barcode is not None else "BARCODE  — (press B)"
+    cv2.putText(frame, bc_text, (16, 34),
+                cv2.FONT_HERSHEY_DUPLEX, 0.95, YELLOW, 2, cv2.LINE_AA)
+
+    thr_text = f"Noise {noise_thresh}   Threshold {diff_thresh:.1f}"
+    (tw, _), _ = cv2.getTextSize(thr_text, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 1)
+    cv2.putText(frame, thr_text, (w - tw - 16, 32),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.52, GRAY, 1, cv2.LINE_AA)
+
+    # ── Bottom bar (130 px) ───────────────────────────────────────────────
+    bar_y = h - 130
+    _dark_panel(frame, 0, bar_y, w, h)
 
     if mouse["active_slot"] is not None:
-        hint = f"Drawing Ref {mouse['active_slot']} — click and drag, release to confirm"
-        cv2.putText(frame, hint, (10, h - bar_h + 22),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, YELLOW, 1, cv2.LINE_AA)
+        hint = f"Drawing Ref {mouse['active_slot']}  —  click and drag, release to confirm"
+        cv2.putText(frame, hint, (16, bar_y + 24),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.53, YELLOW, 1, cv2.LINE_AA)
     else:
-        controls = "1/2: Draw ref    SPACE: Inspect    B: New barcode    Q: Quit"
-        cv2.putText(frame, controls, (10, h - bar_h + 22),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, WHITE, 1, cv2.LINE_AA)
+        ctrl = "1 / 2: Draw reference     SPACE: Inspect     B: Set barcode     Q: Quit"
+        cv2.putText(frame, ctrl, (16, bar_y + 24),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.50, GRAY, 1, cv2.LINE_AA)
 
-    # Per-slot status
-    for slot in [1, 2]:
+    # Slot panels: reference thumbnail + status labels
+    for idx, slot in enumerate([1, 2]):
+        sc = SLOT_COLORS[slot]
+        px = 16 + idx * 380
+        ty = bar_y + 38
+
+        # Thumbnail (or empty placeholder)
+        thumb = thumbs.get(slot)
+        if thumb is not None:
+            try:
+                frame[ty:ty + THUMB_H, px:px + THUMB_W] = thumb
+            except ValueError:
+                pass
+            cv2.rectangle(frame, (px, ty), (px + THUMB_W, ty + THUMB_H), sc, 1)
+        else:
+            cv2.rectangle(frame, (px, ty), (px + THUMB_W, ty + THUMB_H), (50, 50, 50), -1)
+            cv2.rectangle(frame, (px, ty), (px + THUMB_W, ty + THUMB_H), sc, 1)
+            cv2.putText(frame, "NO REF",
+                        (px + 20, ty + THUMB_H // 2 + 6),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, GRAY, 1, cv2.LINE_AA)
+
+        # Labels beside thumbnail
+        lx = px + THUMB_W + 12
+        ly = ty + 14
+
         has_roi = slot in rois
         has_ref = slot in refs
         if has_roi and has_ref:
-            status = "READY"
-            color  = GREEN
+            status_txt, s_color = "READY",  GREEN
         elif has_roi:
-            status = "ROI set, no ref"
-            color  = YELLOW
+            status_txt, s_color = "ROI SET", YELLOW
         else:
-            status = "NONE"
-            color  = YELLOW
-        label = f"Ref {slot}: {status}"
-        x = 10 if slot == 1 else 300
-        cv2.putText(frame, label, (x, h - bar_h + 50),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.52, color, 1, cv2.LINE_AA)
+            status_txt, s_color = "NO ROI",  GRAY
 
-    # Per-slot inspection results
-    if live_results:
-        for slot, (passed, diff_val) in live_results.items():
-            color  = GREEN if passed else RED
-            result = "PASS" if passed else "FAIL"
-            label  = f"Ref {slot}: {result}  diff={diff_val:.1f}"
-            x = 10 if slot == 1 else 300
-            cv2.putText(frame, label, (x, h - bar_h + 74),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1, cv2.LINE_AA)
+        cv2.putText(frame, f"REF {slot}", (lx, ly),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.52, sc, 1, cv2.LINE_AA)
+        cv2.putText(frame, status_txt, (lx, ly + 22),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.52, s_color, 1, cv2.LINE_AA)
+
+        if slot in live_results:
+            passed, diff_val = live_results[slot]
+            r_color = GREEN if passed else RED
+            cv2.putText(frame, "PASS" if passed else "FAIL",
+                        (lx, ly + 46),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.70, r_color, 2, cv2.LINE_AA)
+            cv2.putText(frame, f"diff {diff_val:.1f}",
+                        (lx, ly + 68),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, GRAY, 1, cv2.LINE_AA)
+
+    return frame
+
+
+def draw_barcode_popup(frame, text, error):
+    """Render an in-window barcode entry modal over the live frame."""
+    h, w = frame.shape[:2]
+
+    # Darken the entire background
+    bg = np.zeros_like(frame)
+    cv2.addWeighted(bg, 0.55, frame, 0.45, 0, frame)
+
+    # Dialog dimensions and position
+    dw, dh = 480, 220
+    dx = (w - dw) // 2
+    dy = (h - dh) // 2
+
+    cv2.rectangle(frame, (dx, dy), (dx + dw, dy + dh), (30, 30, 30), -1)
+    cv2.rectangle(frame, (dx, dy), (dx + dw, dy + dh), (90, 90, 90), 2)
+
+    # Title
+    cv2.putText(frame, "Enter Barcode Number", (dx + 20, dy + 42),
+                cv2.FONT_HERSHEY_DUPLEX, 0.85, WHITE, 2, cv2.LINE_AA)
+    cv2.line(frame, (dx + 16, dy + 52), (dx + dw - 16, dy + 52),
+             (70, 70, 70), 1)
+
+    # Input field
+    ix1, iy1, ix2, iy2 = dx + 16, dy + 64, dx + dw - 16, dy + 130
+    cv2.rectangle(frame, (ix1, iy1), (ix2, iy2), (50, 50, 50), -1)
+    cv2.rectangle(frame, (ix1, iy1), (ix2, iy2), (100, 100, 100), 1)
+    cv2.putText(frame, text + "|", (ix1 + 12, iy2 - 14),
+                cv2.FONT_HERSHEY_DUPLEX, 1.4, YELLOW, 2, cv2.LINE_AA)
+
+    # Hint and validation error
+    cv2.putText(frame, "ENTER to confirm    ESC to cancel    (1 – 100)",
+                (dx + 16, dy + 158),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.46, GRAY, 1, cv2.LINE_AA)
+    if error:
+        cv2.putText(frame, error, (dx + 16, dy + 192),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.50, RED, 1, cv2.LINE_AA)
 
     return frame
 
@@ -171,36 +255,37 @@ def draw_overlay(frame, rois, refs, live_results, barcode=None):
 def flash_result(frame, passed, per_slot):
     h, w = frame.shape[:2]
     banner = frame.copy()
-    overall_color = GREEN if passed else RED
-    overall_label = "PASS" if passed else "FAIL"
-    cv2.rectangle(banner, (0, 0), (w, h), overall_color, 30)
-    cv2.putText(banner, overall_label, (w // 2 - 120, h // 2),
-                cv2.FONT_HERSHEY_DUPLEX, 5, overall_color, 10, cv2.LINE_AA)
+    color  = GREEN if passed else RED
+    label  = "PASS" if passed else "FAIL"
 
-    # Per-slot breakdown below
-    y = h // 2 + 80
+    # Thick colored border
+    cv2.rectangle(banner, (0, 0), (w, h), color, 30)
+
+    # Large verdict centred in the upper half
+    font  = cv2.FONT_HERSHEY_DUPLEX
+    scale = 6.0
+    thick = 14
+    (lw, _), _ = cv2.getTextSize(label, font, scale, thick)
+    cv2.putText(banner, label, ((w - lw) // 2, h // 2 - 20),
+                font, scale, color, thick, cv2.LINE_AA)
+
+    # Per-slot breakdown centred below
+    y = h // 2 + 72
     for slot, (slot_passed, diff_val) in sorted(per_slot.items()):
-        color = GREEN if slot_passed else RED
-        label = f"Ref {slot}: {'PASS' if slot_passed else 'FAIL'}  diff={diff_val:.1f}"
-        cv2.putText(banner, label, (w // 2 - 160, y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, color, 2, cv2.LINE_AA)
-        y += 50
+        sc   = GREEN if slot_passed else RED
+        txt  = f"Ref {slot}:  {'PASS' if slot_passed else 'FAIL'}   diff {diff_val:.1f}"
+        (sw, _), _ = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, 0.95, 2)
+        cv2.putText(banner, txt, ((w - sw) // 2, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.95, sc, 2, cv2.LINE_AA)
+        y += 48
 
     cv2.imshow(WINDOW_NAME, banner)
     cv2.waitKey(1800)
 
 
 # ---------------------------------------------------------------------------
-# Barcode + logging
+# Logging
 # ---------------------------------------------------------------------------
-
-def prompt_barcode():
-    while True:
-        raw = input("Enter barcode (1–100): ").strip()
-        if raw.isdigit() and 1 <= int(raw) <= 100:
-            return int(raw)
-        print("  Invalid — enter a whole number between 1 and 100.")
-
 
 def save_inspection(barcode, frame, per_slot, overall_passed):
     folder = os.path.join(LOGS_DIR, str(barcode))
@@ -210,15 +295,15 @@ def save_inspection(barcode, frame, per_slot, overall_passed):
     verdict = "PASS" if overall_passed else "FAIL"
     color   = GREEN if overall_passed else RED
 
-    # Stamp barcode + verdict clearly on the saved image
     out = frame.copy()
-    cv2.putText(out, f"#{barcode}  {verdict}", (10, 40),
+    # Stamp below the top overlay bar so it doesn't obscure the barcode display
+    cv2.putText(out, f"#{barcode}  {verdict}", (10, 80),
                 cv2.FONT_HERSHEY_DUPLEX, 1.2, color, 3, cv2.LINE_AA)
 
     img_path = os.path.join(folder, f"{ts}_{verdict}.jpg")
     cv2.imwrite(img_path, out)
 
-    log_path    = os.path.join(folder, "log.csv")
+    log_path     = os.path.join(folder, "log.csv")
     write_header = not os.path.exists(log_path)
     with open(log_path, "a", newline="") as f:
         writer = csv.writer(f)
@@ -258,81 +343,100 @@ def main():
     cv2.createTrackbar("Diff threshold x10 (0-500)", WINDOW_NAME,
                        DEFAULT_DIFF_THRESHOLD, 500, lambda _: None)
 
-    # Load persisted ROIs and reference crops
-    rois = {}   # {slot: (x1,y1,x2,y2)} in preview coords
-    refs = {}   # {slot: preprocessed crop array}
+    rois   = {}
+    refs   = {}
+    thumbs = {}
 
     for slot in [1, 2]:
         roi_path = ROI_PATHS[slot - 1]
         ref_path = REFERENCE_PATHS[slot - 1]
         if os.path.exists(roi_path):
             rois[slot] = tuple(np.load(roi_path).tolist())
-            print(f"Loaded ROI {slot} from {roi_path}")
         if os.path.exists(ref_path):
-            refs[slot] = preprocess(cv2.imread(ref_path))
-            print(f"Loaded reference {slot} from {ref_path}")
+            refs[slot]   = preprocess(cv2.imread(ref_path))
+            thumbs[slot] = load_thumb(ref_path)
 
-    sample_crops = {}  # {slot: preprocessed crop} from last inspect
-    live_results = {}  # {slot: (passed, diff_val)}
+    sample_crops    = {}
+    live_results    = {}
+    current_barcode = None
 
-    current_barcode = prompt_barcode()
-
-    print("Live preview open.")
-    print("  1 / 2 → click and drag to define reference region for O-ring 1 / 2")
-    print("  SPACE → inspect both regions independently")
-    print("  B     → enter a new barcode")
-    print("  Q     → quit")
+    # Open barcode popup immediately — no terminal prompt needed
+    popup = {"active": True, "text": "", "error": ""}
 
     try:
         while True:
             noise_thresh = cv2.getTrackbarPos("Noise filter  (0-100)", WINDOW_NAME)
             diff_thresh  = cv2.getTrackbarPos("Diff threshold x10 (0-500)", WINDOW_NAME) / 10.0
 
-            # ROI was just drawn — capture still and save reference crop
+            # Handle a completed ROI draw
             if mouse["roi_ready"] and mouse["active_slot"] is not None:
-                slot = mouse["active_slot"]
+                slot        = mouse["active_slot"]
                 roi_preview = normalise_rect(mouse["pt1"], mouse["pt2"])
-
-                # Ignore tiny accidental clicks
-                if (roi_preview[2] - roi_preview[0]) > 10 and (roi_preview[3] - roi_preview[1]) > 10:
-                    print(f"Capturing reference {slot}…")
+                if (roi_preview[2] - roi_preview[0]) > 10 and \
+                   (roi_preview[3] - roi_preview[1]) > 10:
                     still    = capture_still(cam)
                     ref_crop = crop(still, roi_preview)
                     cv2.imwrite(REFERENCE_PATHS[slot - 1], ref_crop)
                     np.save(ROI_PATHS[slot - 1], np.array(roi_preview))
-                    rois[slot]        = roi_preview
-                    refs[slot]        = preprocess(ref_crop)
+                    rois[slot]   = roi_preview
+                    refs[slot]   = preprocess(ref_crop)
+                    thumbs[slot] = load_thumb(REFERENCE_PATHS[slot - 1])
                     sample_crops.pop(slot, None)
                     live_results.pop(slot, None)
                     print(f"Reference {slot} saved  ROI={roi_preview}")
-
                 mouse["roi_ready"]   = False
                 mouse["active_slot"] = None
 
             # Recompute live results as sliders change
             for slot, ref_proc in refs.items():
                 if slot in sample_crops:
-                    passed, diff_val = compare(ref_proc, sample_crops[slot],
-                                               noise_thresh, diff_thresh)
+                    passed, diff_val   = compare(ref_proc, sample_crops[slot],
+                                                 noise_thresh, diff_thresh)
                     live_results[slot] = (passed, diff_val)
 
-            frame   = cam.capture_array()
-            frame   = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            display = draw_overlay(frame.copy(), rois, refs, live_results, current_barcode)
+            # Build display frame
+            raw     = cam.capture_array()
+            frame   = cv2.cvtColor(raw, cv2.COLOR_RGB2BGR)
+            display = draw_overlay(frame.copy(), rois, refs, live_results, thumbs,
+                                   current_barcode, noise_thresh, diff_thresh)
+
+            if popup["active"]:
+                display = draw_barcode_popup(display, popup["text"], popup["error"])
+
             cv2.imshow(WINDOW_NAME, display)
 
             key = cv2.waitKey(1) & 0xFF
 
+            # ── Popup mode ────────────────────────────────────────────────
+            if popup["active"]:
+                if key == 27:   # ESC — only close if a barcode is already set
+                    if current_barcode is not None:
+                        popup.update(active=False, text="", error="")
+                elif key in (13, 10):   # ENTER / numpad ENTER
+                    t = popup["text"]
+                    if t.isdigit() and 1 <= int(t) <= 100:
+                        current_barcode = int(t)
+                        popup.update(active=False, text="", error="")
+                        print(f"Barcode set to {current_barcode}")
+                    else:
+                        popup["error"] = "Enter a whole number from 1 to 100"
+                elif key == 8:  # BACKSPACE
+                    popup["text"]  = popup["text"][:-1]
+                    popup["error"] = ""
+                elif 48 <= key <= 57 and len(popup["text"]) < 3:   # digits 0–9
+                    popup["text"] += chr(key)
+                    popup["error"] = ""
+                continue  # skip normal key handling while popup is open
+
+            # ── Normal mode ───────────────────────────────────────────────
             if key == ord('q'):
                 break
 
             elif key == ord('b'):
-                current_barcode = prompt_barcode()
-                print(f"Barcode set to {current_barcode}")
+                popup.update(active=True, text="", error="")
 
             elif key in (ord('1'), ord('2')):
                 slot = int(chr(key))
-                print(f"Draw the region for O-ring {slot} — click and drag on the preview.")
                 mouse["active_slot"] = slot
                 mouse["drawing"]     = False
                 mouse["roi_ready"]   = False
@@ -342,13 +446,16 @@ def main():
                 if not active_refs:
                     print("No references set — press 1 or 2 to draw a region first.")
                     continue
+                if current_barcode is None:
+                    popup.update(active=True, text="",
+                                 error="Set a barcode before inspecting")
+                    continue
 
                 print("Inspecting…")
-                still = capture_still(cam)
-
+                still    = capture_still(cam)
                 per_slot = {}
                 for slot, ref_proc in active_refs.items():
-                    sample_crop = preprocess(crop(still, rois[slot]))
+                    sample_crop        = preprocess(crop(still, rois[slot]))
                     sample_crops[slot] = sample_crop
                     passed, diff_val   = compare(ref_proc, sample_crop,
                                                  noise_thresh, diff_thresh)
