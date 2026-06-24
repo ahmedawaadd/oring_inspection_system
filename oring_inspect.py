@@ -169,10 +169,7 @@ def draw_overlay(frame, rois, refs, live_results, thumbs, barcode,
         # Thumbnail (or empty placeholder)
         thumb = thumbs.get(slot)
         if thumb is not None:
-            try:
-                frame[ty:ty + THUMB_H, px:px + THUMB_W] = thumb
-            except ValueError:
-                pass
+            frame[ty:ty + THUMB_H, px:px + THUMB_W] = thumb
             cv2.rectangle(frame, (px, ty), (px + THUMB_W, ty + THUMB_H), sc, 1)
         else:
             cv2.rectangle(frame, (px, ty), (px + THUMB_W, ty + THUMB_H), (50, 50, 50), -1)
@@ -217,8 +214,7 @@ def draw_barcode_popup(frame, text, error):
     h, w = frame.shape[:2]
 
     # Darken the entire background
-    bg = np.zeros_like(frame)
-    cv2.addWeighted(bg, 0.55, frame, 0.45, 0, frame)
+    cv2.convertScaleAbs(frame, frame, alpha=0.45)
 
     # Dialog dimensions and position
     dw, dh = 480, 220
@@ -380,7 +376,8 @@ def main():
                     np.save(ROI_PATHS[slot - 1], np.array(roi_preview))
                     rois[slot]   = roi_preview
                     refs[slot]   = preprocess(ref_crop)
-                    thumbs[slot] = load_thumb(REFERENCE_PATHS[slot - 1])
+                    thumbs[slot] = cv2.resize(ref_crop, (THUMB_W, THUMB_H),
+                                              interpolation=cv2.INTER_AREA)
                     sample_crops.pop(slot, None)
                     live_results.pop(slot, None)
                     print(f"Reference {slot} saved  ROI={roi_preview}")
