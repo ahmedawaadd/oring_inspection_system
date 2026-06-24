@@ -467,6 +467,12 @@ def main():
                     print(f"  Ref {slot}: {'PASS' if passed else 'FAIL'}  diff={diff_val:.1f}")
                 print(f"Overall: {'PASS' if overall_passed else 'FAIL'}"
                       f"  (noise={noise_thresh}  threshold={diff_thresh:.1f})")
+
+                # Rebuild display from the inspection still with updated live_results
+                # so the saved image and flash show THIS inspection's results, not the
+                # previous one (display was constructed before the comparison ran).
+                display = draw_overlay(still.copy(), rois, refs, live_results, thumbs,
+                                       current_barcode, noise_thresh, diff_thresh)
                 save_inspection(current_barcode, display, per_slot, overall_passed)
                 flash_result(display, overall_passed, per_slot)
 
