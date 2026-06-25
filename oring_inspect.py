@@ -42,7 +42,7 @@ SLOT_COLORS = {1: (200, 140,   0), 2: (0, 160, 240)}
 # Mouse state
 # ---------------------------------------------------------------------------
 # OpenCV's mouse callback is a separate function that can't return values to
-# the main loop directly. This shared dictionary is the workaround — both
+# the main loop directly. This shared dictionary is the workaround, both
 # the callback and the main loop read and write the same object, so changes
 # in one are immediately visible in the other.
 mouse = {
@@ -61,16 +61,15 @@ def on_mouse(event, x, y, flags, param):
     if event == cv2.EVENT_LBUTTONDOWN:
         mouse.update(drawing=True, roi_ready=False, pt1=(x, y), pt2=(x, y))
     elif event == cv2.EVENT_MOUSEMOVE and mouse["drawing"]:
-        # Keep updating pt2 as the mouse moves — this is what draws the live box
+        # Keep updating pt2 as the mouse moves
         mouse["pt2"] = (x, y)
     elif event == cv2.EVENT_LBUTTONUP and mouse["drawing"]:
-        # Mouse released — signal the main loop to capture the reference
+        # signal the main loop on mouse release to capture the reference
         mouse.update(drawing=False, pt2=(x, y), roi_ready=True)
 
 
-# ---------------------------------------------------------------------------
+
 # Core helpers
-# ---------------------------------------------------------------------------
 
 def normalise_rect(pt1, pt2):
     """Return (x1, y1, x2, y2) with top-left / bottom-right guaranteed.
@@ -81,15 +80,15 @@ def normalise_rect(pt1, pt2):
 
 
 def crop(image, roi):
-    # NumPy slicing: image[rows, cols] — note y comes before x
+    # NumPy slicing: image[rows, cols] 
     x1, y1, x2, y2 = roi
     return image[y1:y2, x1:x2]
 
 
 def preprocess(image):
-    # Convert to greyscale — colour isn't needed for comparison and halves
-    # the data size. Then blur slightly to smooth out camera sensor noise so
-    # two photos of the same thing don't look different just from grain.
+    # Convert to greyscale, colour isn't needed for comparison
+    # Blur slightly to smooth out camera sensor noise so
+    # two photos of the same thing don't look different just from sensor noise.
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     return cv2.GaussianBlur(gray, BLUR_KERNEL_SIZE, 0)
 
@@ -100,12 +99,11 @@ def compare(ref_proc, sample_proc, noise_thresh, diff_thresh):
     if ref_proc.shape != sample_proc.shape:
         sample_proc = cv2.resize(sample_proc, (ref_proc.shape[1], ref_proc.shape[0]))
 
-    # Subtract the two images pixel by pixel — identical pixels cancel to zero,
+    # Subtract the two images pixel by pixel (identical pixels cancel to zero
     # differences show up as bright spots
     diff = cv2.absdiff(ref_proc, sample_proc)
 
-    # Zero out any differences smaller than noise_thresh — these are just
-    # lighting flicker or sensor noise, not real defects
+    # Zero out any differences smaller than noise_thresh 
     _, thresh = cv2.threshold(diff, noise_thresh, 255, cv2.THRESH_BINARY)
 
     # Average the remaining differences. If that average exceeds diff_thresh,
@@ -130,9 +128,8 @@ def load_thumb(path):
     return cv2.resize(img, (THUMB_W, THUMB_H), interpolation=cv2.INTER_AREA)
 
 
-# ---------------------------------------------------------------------------
+
 # UI helpers
-# ---------------------------------------------------------------------------
 
 def _dark_panel(frame, x1, y1, x2, y2, alpha=0.82):
     """Darken a rectangular region of the frame to create a UI bar.
@@ -143,15 +140,13 @@ def _dark_panel(frame, x1, y1, x2, y2, alpha=0.82):
     frame[y1:y2, x1:x2] = region
 
 
-# ---------------------------------------------------------------------------
 # Overlay drawing
-# ---------------------------------------------------------------------------
 
 def draw_overlay(frame, rois, refs, live_results, thumbs, barcode,
                  noise_thresh, diff_thresh):
     h, w = frame.shape[:2]
 
-    # ── ROI boxes on live feed ────────────────────────────────────────────
+    # ROI boxes on live feed 
     # Draw a coloured rectangle for each saved region of interest so the
     # operator can see where the system is looking
     for slot, roi in rois.items():
@@ -166,10 +161,10 @@ def draw_overlay(frame, rois, refs, live_results, thumbs, barcode,
         cv2.rectangle(frame, mouse["pt1"], mouse["pt2"],
                       SLOT_COLORS[mouse["active_slot"]], 2)
 
-    # ── Top bar (50 px) ───────────────────────────────────────────────────
+    # Top bar (50 px) 
     _dark_panel(frame, 0, 0, w, 50)
 
-    bc_text = f"BARCODE  #{barcode}" if barcode is not None else "BARCODE  — (press B)"
+    bc_text = f"BARCODE  #{barcode}" if barcode is not None else "BARCODE:  (press B)"
     cv2.putText(frame, bc_text, (16, 34),
                 cv2.FONT_HERSHEY_DUPLEX, 0.95, YELLOW, 2, cv2.LINE_AA)
 
@@ -179,14 +174,14 @@ def draw_overlay(frame, rois, refs, live_results, thumbs, barcode,
     cv2.putText(frame, thr_text, (w - tw - 16, 32),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.52, GRAY, 1, cv2.LINE_AA)
 
-    # ── Bottom bar (130 px) ───────────────────────────────────────────────
+    # Bottom bar (130 px) 
     bar_y = h - 130
     _dark_panel(frame, 0, bar_y, w, h)
 
     # Show a drawing hint while the user is defining an ROI, otherwise show
     # the normal keyboard controls
     if mouse["active_slot"] is not None:
-        hint = f"Drawing Ref {mouse['active_slot']}  —  click and drag, release to confirm"
+        hint = f"Drawing Ref {mouse['active_slot']}   click and drag, release to confirm"
         cv2.putText(frame, hint, (16, bar_y + 24),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.53, YELLOW, 1, cv2.LINE_AA)
     else:
@@ -246,7 +241,7 @@ def draw_overlay(frame, rois, refs, live_results, thumbs, barcode,
 
 def draw_barcode_popup(frame, text, error):
     """Draw an in-window barcode entry dialog over the live camera frame.
-    The actual keyboard input is handled in the main loop — this function
+    The actual keyboard input is handled in the main loop  this function
     just renders whatever text has been typed so far."""
     h, w = frame.shape[:2]
 
@@ -266,7 +261,6 @@ def draw_barcode_popup(frame, text, error):
     cv2.line(frame, (dx + 16, dy + 52), (dx + dw - 16, dy + 52),
              (70, 70, 70), 1)
 
-    # Input field — append a | character to act as a text cursor
     ix1, iy1, ix2, iy2 = dx + 16, dy + 64, dx + dw - 16, dy + 130
     cv2.rectangle(frame, (ix1, iy1), (ix2, iy2), (50, 50, 50), -1)
     cv2.rectangle(frame, (ix1, iy1), (ix2, iy2), (100, 100, 100), 1)
@@ -316,9 +310,8 @@ def flash_result(frame, passed, per_slot):
     cv2.waitKey(1800)  # freeze the banner on screen for 1.8 seconds
 
 
-# ---------------------------------------------------------------------------
+
 # Logging
-# ---------------------------------------------------------------------------
 
 def save_inspection(barcode, frame, per_slot, overall_passed):
     # Each barcode gets its own folder so results are easy to browse by part
@@ -359,9 +352,7 @@ def save_inspection(barcode, frame, per_slot, overall_passed):
     print(f"Saved → {img_path}")
 
 
-# ---------------------------------------------------------------------------
 # Main
-# ---------------------------------------------------------------------------
 
 def main():
     cam = Picamera2()
@@ -382,9 +373,9 @@ def main():
     cv2.createTrackbar("Diff threshold x10 (0-500)", WINDOW_NAME,
                        DEFAULT_DIFF_THRESHOLD, 500, lambda _: None)
 
-    rois   = {}  # {slot: (x1, y1, x2, y2)} — the region boxes in camera coordinates
-    refs   = {}  # {slot: preprocessed numpy array} — the reference images to compare against
-    thumbs = {}  # {slot: small BGR image} — thumbnails shown in the status bar
+    rois   = {}  # {slot: (x1, y1, x2, y2)} the region boxes in camera coordinates
+    refs   = {}  # {slot: preprocessed numpy array} the reference images to compare against
+    thumbs = {}  # {slot: small BGR image} thumbnails shown in the status bar
 
     # Load anything saved from a previous session so the operator doesn't
     # have to redraw regions and recapture references every time
@@ -401,18 +392,17 @@ def main():
     live_results    = {}  # {slot: (passed, diff_val)} shown in the status bar
     current_barcode = None
 
-    # Show the barcode popup straight away — operator must set a barcode before
+    # Show the barcode popup straight away, operator must set a barcode before
     # anything else, and this avoids blocking on a terminal input() call
     popup = {"active": True, "text": "", "error": ""}
 
     try:
         while True:
             # Read slider values fresh every frame so changes take effect immediately.
-            # The diff trackbar goes 0–500 but we want 0.0–50.0, so divide by 10.
             noise_thresh = cv2.getTrackbarPos("Noise filter  (0-100)", WINDOW_NAME)
             diff_thresh  = cv2.getTrackbarPos("Diff threshold x10 (0-500)", WINDOW_NAME) / 10.0
 
-            # ── Handle a completed ROI draw ───────────────────────────────
+            # Handle a completed ROI draw 
             # roi_ready is set by the mouse callback when the user releases
             # the mouse button. We act on it here in the main loop.
             if mouse["roi_ready"] and mouse["active_slot"] is not None:
@@ -428,7 +418,7 @@ def main():
                     np.save(ROI_PATHS[slot - 1], np.array(roi_preview)) # persist ROI coords
                     rois[slot]   = roi_preview
                     refs[slot]   = preprocess(ref_crop)
-                    # Build thumbnail directly from the in-memory crop — no need
+                    # Build thumbnail directly from the in-memory crop. no need
                     # to read the file we just saved back off disk
                     thumbs[slot] = cv2.resize(ref_crop, (THUMB_W, THUMB_H),
                                               interpolation=cv2.INTER_AREA)
@@ -440,7 +430,7 @@ def main():
                 mouse["roi_ready"]   = False
                 mouse["active_slot"] = None
 
-            # ── Live threshold recomputation ──────────────────────────────
+            # Live threshold recomputation 
             # If the operator moves a slider, re-run the comparison on the
             # last captured sample so the result updates without pressing SPACE
             for slot, ref_proc in refs.items():
@@ -449,7 +439,7 @@ def main():
                                                  noise_thresh, diff_thresh)
                     live_results[slot] = (passed, diff_val)
 
-            # ── Build and show the display frame ──────────────────────────
+            # Build and show the display frame 
             raw     = cam.capture_array()
             frame   = cv2.cvtColor(raw, cv2.COLOR_RGB2BGR)
             # Pass a copy so draw_overlay can draw on it freely without
@@ -466,14 +456,13 @@ def main():
             # to 8 bits, which is needed on some platforms for correct key codes.
             key = cv2.waitKey(1) & 0xFF
 
-            # ── Popup mode key handling ───────────────────────────────────
+            # Popup mode key handling 
             # While the popup is open, all keypresses go to the barcode input.
             # The 'continue' at the end jumps back to the top of the loop,
             # skipping the normal key handling below.
             if popup["active"]:
                 if key == 27:   # ESC
-                    # Only allow closing the popup if a barcode is already set —
-                    # we don't want the operator to be able to inspect without one
+                    # Only allow closing the popup if a barcode is already set
                     if current_barcode is not None:
                         popup.update(active=False, text="", error="")
                 elif key in (13, 10):   # ENTER (13) or numpad ENTER (10)
@@ -492,7 +481,7 @@ def main():
                     popup["error"] = ""
                 continue  # don't fall through to normal key handling below
 
-            # ── Normal mode key handling ──────────────────────────────────
+            # Normal mode key handling 
             if key == ord('q'):
                 break
 
@@ -511,7 +500,7 @@ def main():
                 # reference file was deleted between sessions)
                 active_refs = {s: r for s, r in refs.items() if s in rois}
                 if not active_refs:
-                    print("No references set — press 1 or 2 to draw a region first.")
+                    print("No references set. press 1 or 2 to draw a region first.")
                     continue
                 if current_barcode is None:
                     popup.update(active=True, text="",
@@ -537,7 +526,7 @@ def main():
 
                 # Rebuild display from the inspection still now that live_results
                 # is updated. Without this, the saved image would show the
-                # previous inspection's results in the status bar — the 'display'
+                # previous inspection's results in the status bar. the 'display'
                 # variable above was constructed before the comparison ran.
                 display = draw_overlay(still.copy(), rois, refs, live_results, thumbs,
                                        current_barcode, noise_thresh, diff_thresh)
