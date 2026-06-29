@@ -267,7 +267,7 @@ def draw_barcode_popup(frame, text, error):
     cv2.putText(frame, text + "|", (ix1 + 12, iy2 - 14),
                 cv2.FONT_HERSHEY_DUPLEX, 1.4, YELLOW, 2, cv2.LINE_AA)
 
-    cv2.putText(frame, "ENTER to confirm    ESC to cancel    (1 – 100)",
+    cv2.putText(frame, "ENTER to confirm    ESC to cancel    (scan or type)",
                 (dx + 16, dy + 158),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.46, GRAY, 1, cv2.LINE_AA)
 
@@ -467,16 +467,17 @@ def main():
                         popup.update(active=False, text="", error="")
                 elif key in (13, 10):   # ENTER (13) or numpad ENTER (10)
                     t = popup["text"]
-                    if t.isdigit() and 1 <= int(t) <= 100:
-                        current_barcode = int(t)
+                    if len(t) > 0:
+                        current_barcode = t
                         popup.update(active=False, text="", error="")
                         print(f"Barcode set to {current_barcode}")
                     else:
-                        popup["error"] = "Enter a whole number from 1 to 100"
+                        popup["error"] = "Barcode cannot be empty"
                 elif key == 8:  # BACKSPACE
                     popup["text"]  = popup["text"][:-1]
                     popup["error"] = ""
-                elif 48 <= key <= 57 and len(popup["text"]) < 3:   # digits 0–9
+                elif (48 <= key <= 57 or 65 <= key <= 90 or 97 <= key <= 122) \
+                        and len(popup["text"]) < 20:   # digits, A–Z, a–z
                     popup["text"] += chr(key)
                     popup["error"] = ""
                 continue  # don't fall through to normal key handling below
