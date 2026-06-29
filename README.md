@@ -30,3 +30,15 @@ Use the two slider bars to tune sensitivity:
 - **Diff threshold** — how different the image has to be before it counts as a FAIL
 
 Reference photos and region coordinates are saved to disk and reloaded automatically next time you run the script.
+
+## Code layout
+
+The tool used to live in one big `oring_inspect.py`. It is now split into small modules, each doing one job:
+
+- `oring_inspect.py` - the entry point, just `main()` and the event loop that wires everything together
+- `Settings.py` - all the tunable values (resolutions, thresholds, colours, file paths)
+- `Vision.py` - cropping, preprocessing and comparing images
+- `Inspection.py` - the pass/fail logic that compares a captured still to the references
+- `Storage.py` - saving and loading references, ROIs and inspection logs
+- `UI.py` - the on-screen overlay, barcode popup, pass/fail flash and mouse handling
+- `BarcodeScanner.py` - reads the USB barcode scanner directly via evdev
