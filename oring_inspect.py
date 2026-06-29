@@ -3,6 +3,8 @@
 
 import csv
 import os
+import queue
+import threading
 import time
 from datetime import datetime
 
@@ -25,6 +27,11 @@ WINDOW_NAME     = "O-ring Inspection"
 LOGS_DIR        = "inspections"
 
 THUMB_W, THUMB_H = 110, 75   # reference image thumbnail size in bottom bar
+
+# Barcode scanner (read directly from its input device via evdev)
+SCANNER_DEVICE    = None       # explicit /dev/input/eventX path, or None to auto-detect
+SCANNER_NAME_HINT = "scanner"  # prefer a device whose name contains this (case-insensitive)
+GRAB_SCANNER      = True        # take exclusive access so scans don't leak to other windows
 
 # ---------------------------------------------------------------------------
 # Colours (BGR)
@@ -68,6 +75,7 @@ def on_mouse(event, x, y, flags, param):
         mouse.update(drawing=False, pt2=(x, y), roi_ready=True)
 
 
+
 # Core helpers
 
 def normalise_rect(pt1, pt2):
@@ -79,15 +87,15 @@ def normalise_rect(pt1, pt2):
 
 
 def crop(image, roi):
-    # NumPy slicing: image[rows, cols]
+    # NumPy slicing: image[rows, cols] 
     x1, y1, x2, y2 = roi
     return image[y1:y2, x1:x2]
 
 
 def preprocess(image):
-    # Convert to greyscale, colour isn't needed for comparison.
-    # Blur slightly to smooth out camera sensor noise so two photos of the
-    # same thing don't look different just from sensor noise.
+    # Convert to greyscale, colour isn't needed for comparison
+    # Blur slightly to smooth out camera sensor noise so
+    # two photos of the same thing don't look different just from sensor noise.
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     return cv2.GaussianBlur(gray, BLUR_KERNEL_SIZE, 0)
 
@@ -98,11 +106,11 @@ def compare(ref_proc, sample_proc, noise_thresh, diff_thresh):
     if ref_proc.shape != sample_proc.shape:
         sample_proc = cv2.resize(sample_proc, (ref_proc.shape[1], ref_proc.shape[0]))
 
-    # Subtract the two images pixel by pixel — identical pixels cancel to zero,
+    # Subtract the two images pixel by pixel (identical pixels cancel to zero
     # differences show up as bright spots
     diff = cv2.absdiff(ref_proc, sample_proc)
 
-    # Zero out any differences smaller than noise_thresh
+    # Zero out any differences smaller than noise_thresh 
     _, thresh = cv2.threshold(diff, noise_thresh, 255, cv2.THRESH_BINARY)
 
     # Average the remaining differences. If that average exceeds diff_thresh,
@@ -127,6 +135,141 @@ def load_thumb(path):
     return cv2.resize(img, (THUMB_W, THUMB_H), interpolation=cv2.INTER_AREA)
 
 
+
+# Barcode scanner (evdev)
+
+# A USB barcode scanner presents itself to the OS as a keyboard. OpenCV's
+# window can't keep up with how fast it "types" — cv2.waitKey only remembers
+# the last key between calls, so most characters of a fast scan get dropped.
+# To capture scans reliably we read the scanner's key events straight from
+# its input device with evdev, in a background thread, and assemble the
+# characters ourselves until the scanner sends ENTER.
+
+def _build_keymap(ecodes):
+    """Map evdev key codes to characters (letters, digits, and a few symbols)."""
+    m = {}
+    for c in "0123456789":
+        m[getattr(ecodes, f"KEY_{c}")] = c
+    for c in "abcdefghijklmnopqrstuvwxyz":
+        m[getattr(ecodes, f"KEY_{c.upper()}")] = c
+    m[ecodes.KEY_MINUS] = "-"
+    m[ecodes.KEY_DOT]   = "."
+    return m
+
+
+class BarcodeScanner:
+    """Reads a barcode scanner via evdev in a background thread. Completed
+    scans (terminated by ENTER) are pushed onto a queue for the main loop to
+    drain. If evdev isn't installed or no scanner is found this does nothing
+    and manual keyboard entry still works."""
+
+    def __init__(self, device_path=None, name_hint="scanner", grab=True):
+        self.results = queue.Queue()
+        self._buffer = ""
+        self._lock   = threading.Lock()
+        self._stop   = threading.Event()
+        self.device  = None
+        self.name    = None
+
+        try:
+            from evdev import InputDevice, ecodes, list_devices
+        except ImportError:
+            print("evdev not installed — scanner disabled, type the barcode manually.")
+            return
+
+        self._ecodes = ecodes
+        self._keymap = _build_keymap(ecodes)
+
+        if device_path is None:
+            device_path = self._autodetect(InputDevice, ecodes, list_devices, name_hint)
+        if device_path is None:
+            print("No barcode scanner found — type the barcode manually.")
+            return
+
+        try:
+            self.device = InputDevice(device_path)
+            if grab:
+                self.device.grab()   # exclusive access so scans don't leak elsewhere
+            self.name = self.device.name
+            print(f"Barcode scanner connected: {self.name} ({device_path})")
+        except OSError as e:
+            print(f"Could not open barcode scanner at {device_path}: {e}")
+            self.device = None
+            return
+
+        threading.Thread(target=self._run, daemon=True).start()
+
+    @staticmethod
+    def _autodetect(InputDevice, ecodes, list_devices, name_hint):
+        # A scanner looks like a keyboard: it can produce ENTER and letter keys
+        candidates = []
+        for path in list_devices():
+            try:
+                dev = InputDevice(path)
+            except OSError:
+                continue
+            keys = dev.capabilities().get(ecodes.EV_KEY, [])
+            if ecodes.KEY_ENTER in keys and ecodes.KEY_A in keys:
+                candidates.append(dev)
+        # Prefer a device whose name hints it's a scanner (so we don't grab a
+        # regular keyboard if one is also attached)
+        for dev in candidates:
+            if name_hint and name_hint.lower() in dev.name.lower():
+                return dev.path
+        return candidates[0].path if candidates else None
+
+    def _run(self):
+        ecodes = self._ecodes
+        shift_keys = {ecodes.KEY_LEFTSHIFT, ecodes.KEY_RIGHTSHIFT}
+        shift = False
+        try:
+            for event in self.device.read_loop():
+                if self._stop.is_set():
+                    break
+                if event.type != ecodes.EV_KEY:
+                    continue
+                if event.code in shift_keys:
+                    shift = event.value in (1, 2)   # 1=down, 2=autorepeat
+                    continue
+                if event.value != 1:                # only act on key-down
+                    continue
+                if event.code in (ecodes.KEY_ENTER, ecodes.KEY_KPENTER):
+                    # Scanner finished — hand the assembled barcode to the main loop
+                    with self._lock:
+                        code, self._buffer = self._buffer, ""
+                    if code:
+                        self.results.put(code)
+                else:
+                    ch = self._keymap.get(event.code)
+                    if ch is not None:
+                        with self._lock:
+                            self._buffer += ch.upper() if shift else ch
+        except OSError:
+            pass   # device unplugged or closed
+
+    def snapshot(self):
+        """Return the partially-typed scan currently being assembled (for display)."""
+        with self._lock:
+            return self._buffer
+
+    def take_buffer(self):
+        """Return and clear the partial scan. Used when the operator presses
+        ENTER manually because their scanner isn't configured to append one."""
+        with self._lock:
+            buf, self._buffer = self._buffer, ""
+        return buf
+
+    def close(self):
+        self._stop.set()
+        if self.device is not None:
+            try:
+                self.device.ungrab()
+            except OSError:
+                pass
+            self.device.close()
+
+
+
 # UI helpers
 
 def _dark_panel(frame, x1, y1, x2, y2, alpha=0.82):
@@ -144,7 +287,7 @@ def draw_overlay(frame, rois, refs, live_results, thumbs, barcode,
                  noise_thresh, diff_thresh):
     h, w = frame.shape[:2]
 
-    # ROI boxes on live feed
+    # ROI boxes on live feed 
     # Draw a coloured rectangle for each saved region of interest so the
     # operator can see where the system is looking
     for slot, roi in rois.items():
@@ -159,7 +302,7 @@ def draw_overlay(frame, rois, refs, live_results, thumbs, barcode,
         cv2.rectangle(frame, mouse["pt1"], mouse["pt2"],
                       SLOT_COLORS[mouse["active_slot"]], 2)
 
-    # Top bar (50 px)
+    # Top bar (50 px) 
     _dark_panel(frame, 0, 0, w, 50)
 
     bc_text = f"BARCODE  #{barcode}" if barcode is not None else "BARCODE:  (press B)"
@@ -172,7 +315,7 @@ def draw_overlay(frame, rois, refs, live_results, thumbs, barcode,
     cv2.putText(frame, thr_text, (w - tw - 16, 32),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.52, GRAY, 1, cv2.LINE_AA)
 
-    # Bottom bar (130 px)
+    # Bottom bar (130 px) 
     bar_y = h - 130
     _dark_panel(frame, 0, bar_y, w, h)
 
@@ -239,7 +382,7 @@ def draw_overlay(frame, rois, refs, live_results, thumbs, barcode,
 
 def draw_barcode_popup(frame, text, error):
     """Draw an in-window barcode entry dialog over the live camera frame.
-    The actual keyboard input is handled in the main loop — this function
+    The actual keyboard input is handled in the main loop  this function
     just renders whatever text has been typed so far."""
     h, w = frame.shape[:2]
 
@@ -259,7 +402,6 @@ def draw_barcode_popup(frame, text, error):
     cv2.line(frame, (dx + 16, dy + 52), (dx + dw - 16, dy + 52),
              (70, 70, 70), 1)
 
-    # Input field — append a | character to act as a text cursor
     ix1, iy1, ix2, iy2 = dx + 16, dy + 64, dx + dw - 16, dy + 130
     cv2.rectangle(frame, (ix1, iy1), (ix2, iy2), (50, 50, 50), -1)
     cv2.rectangle(frame, (ix1, iy1), (ix2, iy2), (100, 100, 100), 1)
@@ -307,6 +449,7 @@ def flash_result(frame, passed, per_slot):
 
     cv2.imshow(WINDOW_NAME, banner)
     cv2.waitKey(1800)  # freeze the banner on screen for 1.8 seconds
+
 
 
 # Logging
@@ -394,13 +537,28 @@ def main():
     # anything else, and this avoids blocking on a terminal input() call
     popup = {"active": True, "text": "", "error": ""}
 
+    # Connect the barcode scanner (reads its input device directly so fast
+    # scans aren't dropped by the GUI). Falls back to manual typing if absent.
+    scanner = BarcodeScanner(device_path=SCANNER_DEVICE,
+                             name_hint=SCANNER_NAME_HINT, grab=GRAB_SCANNER)
+
     try:
         while True:
             # Read slider values fresh every frame so changes take effect immediately.
             noise_thresh = cv2.getTrackbarPos("Noise filter  (0-100)", WINDOW_NAME)
             diff_thresh  = cv2.getTrackbarPos("Diff threshold x10 (0-500)", WINDOW_NAME) / 10.0
 
-            # Handle a completed ROI draw
+            # Apply any completed barcode scan. Scanning always sets the barcode
+            # and closes the popup, whether or not it was open.
+            try:
+                while True:
+                    current_barcode = scanner.results.get_nowait()
+                    popup.update(active=False, text="", error="")
+                    print(f"Barcode scanned: {current_barcode}")
+            except queue.Empty:
+                pass
+
+            # Handle a completed ROI draw 
             # roi_ready is set by the mouse callback when the user releases
             # the mouse button. We act on it here in the main loop.
             if mouse["roi_ready"] and mouse["active_slot"] is not None:
@@ -412,11 +570,11 @@ def main():
                    (roi_preview[3] - roi_preview[1]) > 10:
                     still    = capture_still(cam)
                     ref_crop = crop(still, roi_preview)
-                    cv2.imwrite(REFERENCE_PATHS[slot - 1], ref_crop)    # persist to disk
+                    cv2.imwrite(REFERENCE_PATHS[slot - 1], ref_crop)   # persist to disk
                     np.save(ROI_PATHS[slot - 1], np.array(roi_preview)) # persist ROI coords
                     rois[slot]   = roi_preview
                     refs[slot]   = preprocess(ref_crop)
-                    # Build thumbnail directly from the in-memory crop — no need
+                    # Build thumbnail directly from the in-memory crop. no need
                     # to read the file we just saved back off disk
                     thumbs[slot] = cv2.resize(ref_crop, (THUMB_W, THUMB_H),
                                               interpolation=cv2.INTER_AREA)
@@ -428,7 +586,7 @@ def main():
                 mouse["roi_ready"]   = False
                 mouse["active_slot"] = None
 
-            # Live threshold recomputation
+            # Live threshold recomputation 
             # If the operator moves a slider, re-run the comparison on the
             # last captured sample so the result updates without pressing SPACE
             for slot, ref_proc in refs.items():
@@ -437,7 +595,7 @@ def main():
                                                  noise_thresh, diff_thresh)
                     live_results[slot] = (passed, diff_val)
 
-            # Build and show the display frame
+            # Build and show the display frame 
             raw     = cam.capture_array()
             frame   = cv2.cvtColor(raw, cv2.COLOR_RGB2BGR)
             # Pass a copy so draw_overlay can draw on it freely without
@@ -446,7 +604,9 @@ def main():
                                    current_barcode, noise_thresh, diff_thresh)
 
             if popup["active"]:
-                display = draw_barcode_popup(display, popup["text"], popup["error"])
+                # Show the live scan being assembled, or the manually typed text
+                shown = scanner.snapshot() or popup["text"]
+                display = draw_barcode_popup(display, shown, popup["error"])
 
             cv2.imshow(WINDOW_NAME, display)
 
@@ -455,39 +615,34 @@ def main():
             key = cv2.waitKey(1) & 0xFF
 
             # Popup mode key handling
-            # While the popup is open, all keypresses go to the barcode input.
-            # We drain the entire key queue here rather than taking one key per
-            # frame — the main loop takes ~33ms per iteration but a barcode
-            # scanner fires all characters in ~50ms, so a single waitKey(1)
-            # call per frame drops most of them. Looping until waitKey returns
-            # 255 (no key pending) ensures the full scan is captured at once.
+            # The scanner is read separately (via evdev above), so here we only
+            # handle the rare case of someone typing a barcode by hand, plus
+            # ESC to cancel. Human typing is slow enough for one key per frame.
             if popup["active"]:
-                while key != 255:
-                    if key == 27:   # ESC
-                        # Only allow closing the popup if a barcode is already set
-                        if current_barcode is not None:
-                            popup.update(active=False, text="", error="")
-                        break
-                    elif key in (13, 10):   # ENTER (13) or numpad ENTER (10)
-                        t = popup["text"]
-                        if len(t) > 0:
-                            current_barcode = t
-                            popup.update(active=False, text="", error="")
-                            print(f"Barcode set to {current_barcode}")
-                        else:
-                            popup["error"] = "Barcode cannot be empty"
-                        break  # stop draining after ENTER confirms the barcode
-                    elif key == 8:  # BACKSPACE
-                        popup["text"]  = popup["text"][:-1]
-                        popup["error"] = ""
-                    elif (48 <= key <= 57 or 65 <= key <= 90 or 97 <= key <= 122) \
-                            and len(popup["text"]) < 20:   # digits, A-Z, a-z
-                        popup["text"] += chr(key)
-                        popup["error"] = ""
-                    key = cv2.waitKey(1) & 0xFF  # fetch next queued key; 255 = none left
+                if key == 27:   # ESC
+                    # Only allow closing the popup if a barcode is already set
+                    if current_barcode is not None:
+                        popup.update(active=False, text="", error="")
+                elif key in (13, 10):   # ENTER (13) or numpad ENTER (10)
+                    # Commit either manually typed text, or a scan whose scanner
+                    # didn't append its own ENTER terminator
+                    t = popup["text"] or scanner.take_buffer()
+                    if t:
+                        current_barcode = t
+                        popup.update(active=False, text="", error="")
+                        print(f"Barcode set to {current_barcode}")
+                    else:
+                        popup["error"] = "Barcode cannot be empty"
+                elif key == 8:  # BACKSPACE
+                    popup["text"]  = popup["text"][:-1]
+                    popup["error"] = ""
+                elif (48 <= key <= 57 or 65 <= key <= 90 or 97 <= key <= 122) \
+                        and len(popup["text"]) < 20:   # digits, A–Z, a–z
+                    popup["text"] += chr(key)
+                    popup["error"] = ""
                 continue  # don't fall through to normal key handling below
 
-            # Normal mode key handling
+            # Normal mode key handling 
             if key == ord('q'):
                 break
 
@@ -532,7 +687,7 @@ def main():
 
                 # Rebuild display from the inspection still now that live_results
                 # is updated. Without this, the saved image would show the
-                # previous inspection's results in the status bar — the 'display'
+                # previous inspection's results in the status bar. the 'display'
                 # variable above was constructed before the comparison ran.
                 display = draw_overlay(still.copy(), rois, refs, live_results, thumbs,
                                        current_barcode, noise_thresh, diff_thresh)
@@ -540,7 +695,8 @@ def main():
                 flash_result(display, overall_passed, per_slot)
 
     finally:
-        # Always clean up the camera and windows, even if an exception is thrown
+        # Always clean up the camera, scanner, and windows, even on exception
+        scanner.close()
         cam.stop()
         cv2.destroyAllWindows()
 
