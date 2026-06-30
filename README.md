@@ -9,7 +9,7 @@ A live camera tool that checks O-rings for defects by comparing them to a refere
 - Python dependencies:
 
 ```bash
-pip install opencv-python numpy picamera2
+pip install opencv-python numpy picamera2 evdev
 ```
 
 ## How to run
