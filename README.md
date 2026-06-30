@@ -15,7 +15,7 @@ pip install opencv-python numpy picamera2 evdev
 ## How to run
 
 ```bash
-python oring_inspect.py
+python main.py
 ```
 
 ## How to use
@@ -30,3 +30,19 @@ Use the two slider bars to tune sensitivity:
 - **Diff threshold** — how different the image has to be before it counts as a FAIL
 
 Reference photos and region coordinates are saved to disk and reloaded automatically next time you run the script.
+
+## Project structure
+
+The tool is split into focused modules:
+
+| File | Responsibility |
+|---|---|
+| `main.py` | Entry point: window/trackbar setup and the interactive event loop |
+| `config.py` | Tunable constants and the colour palette |
+| `camera.py` | Pi camera setup and frame capture |
+| `image_ops.py` | Cropping, preprocessing, image comparison, thumbnails |
+| `inspection.py` | Loading/capturing references and running a comparison pass |
+| `overlay.py` | On-screen UI: status bars, barcode popup, result banner |
+| `scanner.py` | USB barcode scanner support (read via evdev) |
+| `mouse.py` | Mouse state and the region-drawing callback |
+| `logger.py` | Saving result images and the per-barcode CSV log |
