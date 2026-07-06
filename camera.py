@@ -8,7 +8,7 @@ from picamera2 import Picamera2
 from config import PREVIEW_RESOLUTION
 
 
-def create_camera():
+def create_camera():  # pragma: no cover, requires real Pi camera hardware
     """Configure and start the camera, then wait for the sensor to settle
     so the first captures have stable exposure and white balance."""
     cam = Picamera2()

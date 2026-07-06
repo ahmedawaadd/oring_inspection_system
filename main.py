@@ -25,7 +25,7 @@ from scanner import BarcodeScanner
 from vision import compare, crop, make_thumb, normalise_rect, preprocess
 
 
-def setup_window():
+def setup_window():  # pragma: no cover, requires a display and OpenCV highgui
     """Create the display window with mouse callback and tuning sliders.
     Slider values are read back every frame, so moving them takes effect
     immediately."""
@@ -115,7 +115,7 @@ def run_inspection(cam, active_refs, rois, sample_crops, live_results,
     return still, per_slot, overall_passed
 
 
-def main():
+def main():  # pragma: no cover, drives real camera and GUI; logic lives in the tested helpers
     cam = create_camera()
     setup_window()
 

@@ -33,10 +33,22 @@ def save_reference(slot, ref_crop, roi):
     np.save(ROI_PATHS[slot - 1], np.array(roi))
 
 
+def safe_folder_name(barcode):
+    """Restrict a barcode to filesystem-safe characters. Scanned input
+    becomes a folder name, so path separators and dot-only names must
+    not be able to escape LOGS_DIR. Normal barcodes pass through
+    unchanged."""
+    safe = "".join(c if c.isalnum() or c in "-._" else "_" for c in str(barcode))
+    if not safe.strip("."):
+        # "." or ".." would resolve to the logs dir or its parent
+        safe = "_" + safe
+    return safe
+
+
 def save_inspection(barcode, frame, per_slot, overall_passed):
     """Save the annotated inspection image and append a CSV log row.
     Each barcode gets its own folder so results are easy to browse by part."""
-    folder = os.path.join(LOGS_DIR, str(barcode))
+    folder = os.path.join(LOGS_DIR, safe_folder_name(barcode))
     os.makedirs(folder, exist_ok=True)
 
     ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")

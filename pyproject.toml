@@ -1,0 +1,20 @@
+# Tooling configuration. Runtime dependencies stay in requirements.txt
+# because this is a deployed script, not an installable package.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Project modules live at the repo root, not in a package
+pythonpath = ["."]
+addopts = "-q --strict-markers"
+
+[tool.coverage.run]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+# Hardware and GUI entry points carry explicit no-cover pragmas; the
+# remaining logic must stay near-fully covered
+fail_under = 95
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+]
