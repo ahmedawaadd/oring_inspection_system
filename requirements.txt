@@ -6,7 +6,7 @@ numpy>=1.26
 # picamera2>=0.3
 # RPi.GPIO>=0.7
 # ultralytics>=8.0
-# evdev>=1.6          # read the USB barcode scanner directly (oring_inspect.py)
+# evdev>=1.6          # read the USB barcode scanner directly (scanner.py)
 
 # Optional — enable PNG image saving in logger._write_image()
 # Pillow>=10.0
