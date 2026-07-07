@@ -1,0 +1,26 @@
+# Lint and test on every push and pull request. Hardware modules
+# (picamera2, evdev) are stubbed by the test suite, so CI needs no
+# special runners.
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dev dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: python -m pyflakes *.py tests/*.py
+
+      - name: Test with coverage
+        run: python -m pytest --cov=. --cov-report=term-missing

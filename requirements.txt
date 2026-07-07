@@ -1,12 +1,10 @@
-# Core (always required)
+# Runtime dependencies
 numpy>=1.26
+opencv-python>=4.8
 
-# Optional — hardware path only (not needed for stub mode)
-# Uncomment when deploying on the Pi with real hardware:
-# picamera2>=0.3
-# RPi.GPIO>=0.7
-# ultralytics>=8.0
-# evdev>=1.6          # read the USB barcode scanner directly (oring_inspect.py)
+# Hardware-only, required when deploying on the Pi:
+# picamera2>=0.3   # Pi HQ Camera capture (camera.py)
+# evdev>=1.6       # USB barcode scanner (scanner.py); optional, the app
+#                  # falls back to manual typing without it
 
-# Optional — enable PNG image saving in logger._write_image()
-# Pillow>=10.0
+# Development and CI dependencies are in requirements-dev.txt
