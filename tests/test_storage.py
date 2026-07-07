@@ -1,4 +1,7 @@
-"""Tests for storage.py: persistence round trips, the CSV contract, and
+"""
+test_storage.py
+
+Tests for storage.py: persistence round trips, the CSV contract, and
 hostile barcode input. All tests run in an isolated workdir."""
 
 import csv

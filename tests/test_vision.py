@@ -1,4 +1,7 @@
-"""Tests for vision.py: the comparison logic is the product, so it gets
+"""
+test_vision.py
+
+Tests for vision.py: the comparison logic is the product, so it gets
 the densest coverage, including threshold boundaries."""
 
 import numpy as np

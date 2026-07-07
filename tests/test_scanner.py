@@ -1,4 +1,7 @@
-"""Tests for scanner.py. The evdev protocol is faked with small doubles
+"""
+test_scanner.py
+
+Tests for scanner.py. The evdev protocol is faked with small doubles
 so key assembly, shift handling, and autodetection are tested without
 hardware or real threads."""
 

@@ -1,4 +1,7 @@
-"""Camera setup and capture for the Pi HQ Camera (IMX477) via Picamera2."""
+"""
+camera.py
+
+Camera setup and capture for the Pi HQ Camera (IMX477) via Picamera2."""
 
 import time
 

@@ -1,4 +1,7 @@
-"""Configuration for the O-ring inspection system.
+"""
+config.py
+
+Configuration for the O-ring inspection system.
 
 Every tunable value lives here so behaviour can be adjusted without
 touching application logic.

@@ -1,4 +1,7 @@
-"""Barcode scanner input via evdev.
+"""
+scanner.py
+
+Barcode scanner input via evdev.
 
 A USB barcode scanner presents itself to the OS as a keyboard, but it
 "types" faster than an OpenCV window can keep up with: cv2.waitKey only

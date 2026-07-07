@@ -1,4 +1,7 @@
-"""Tests for ui.py. The mouse state machine is tested precisely; the
+"""
+test_ui.py
+
+Tests for ui.py. The mouse state machine is tested precisely; the
 drawing functions are tested for shape, side effects, and measurable
 pixel changes, since pixel-perfect assertions on rendered text are
 brittle across OpenCV versions."""

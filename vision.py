@@ -1,4 +1,7 @@
-"""Image processing: rectangle handling, preprocessing, and comparison."""
+"""
+vision.py
+
+Image processing: rectangle handling, preprocessing, and comparison."""
 
 import os
 

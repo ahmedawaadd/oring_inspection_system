@@ -1,4 +1,7 @@
-"""All OpenCV drawing and mouse input: overlay, popup, result banner."""
+"""
+ui.py
+
+All OpenCV drawing and mouse input: overlay, popup, result banner."""
 
 import cv2
 import numpy as np

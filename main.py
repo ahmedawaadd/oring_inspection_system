@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""O-ring inspection for Raspberry Pi 5 + Pi HQ Camera (IMX477).
+"""
+main.py
+
+O-ring inspection for Raspberry Pi 5 + Pi HQ Camera (IMX477).
 
 Entry point and main loop only. The rest of the system lives in:
   config.py   tunable values, paths, and colours

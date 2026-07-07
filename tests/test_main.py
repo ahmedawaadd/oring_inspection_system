@@ -1,4 +1,7 @@
-"""Tests for main.py helpers plus an end-to-end workflow test that
+"""
+test_main.py
+
+Tests for main.py helpers plus an end-to-end workflow test that
 drives ROI capture, inspection, and logging against a fake camera."""
 
 import os

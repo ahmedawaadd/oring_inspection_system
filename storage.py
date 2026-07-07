@@ -1,4 +1,7 @@
-"""Persistence: reference images, ROI coordinates, and inspection logs."""
+"""
+storage.py
+
+Persistence: reference images, ROI coordinates, and inspection logs."""
 
 import csv
 import os

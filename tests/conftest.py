@@ -1,4 +1,7 @@
-"""Shared fixtures. Pi-only hardware modules are stubbed here so the
+"""
+conftest.py
+
+Shared fixtures. Pi-only hardware modules are stubbed here so the
 suite runs anywhere: tests exercise the logic, not the hardware."""
 
 import sys
