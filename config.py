@@ -38,6 +38,10 @@ SCANNER_DEVICE = None             # explicit /dev/input/eventX path, or None to 
 SCANNER_NAME = "Honeywell 1950g"  # connect only to the device with this name (case-insensitive)
 GRAB_SCANNER = True               # take exclusive access so scans don't leak to other windows
 
+# Barcodes are a fixed length; the entry popup auto-commits as soon as this
+# many characters have been scanned or typed, so no ENTER press is needed.
+BARCODE_LENGTH = 7
+
 # Colours in BGR order because OpenCV uses BGR, not RGB
 GREEN = (60, 200, 60)
 RED = (50, 50, 220)
