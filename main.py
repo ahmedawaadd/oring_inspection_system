@@ -22,7 +22,7 @@ import ui
 from camera import capture_still, create_camera
 from config import (DEFAULT_DIFF_THRESHOLD, DEFAULT_NOISE_THRESHOLD,
                     DIFF_TRACKBAR, GRAB_SCANNER, NOISE_TRACKBAR,
-                    PREVIEW_RESOLUTION, SCANNER_DEVICE, SCANNER_NAME_HINT,
+                    PREVIEW_RESOLUTION, SCANNER_DEVICE, SCANNER_NAME,
                     WINDOW_NAME)
 from scanner import BarcodeScanner
 from vision import compare, crop, make_thumb, normalise_rect, preprocess
@@ -136,7 +136,7 @@ def main():  # pragma: no cover, drives real camera and GUI; logic lives in the 
 
     # Falls back to manual typing if no scanner is present
     scanner = BarcodeScanner(device_path=SCANNER_DEVICE,
-                             name_hint=SCANNER_NAME_HINT, grab=GRAB_SCANNER)
+                             name=SCANNER_NAME, grab=GRAB_SCANNER)
 
     try:
         while True:
