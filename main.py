@@ -32,7 +32,10 @@ def setup_window():  # pragma: no cover, requires a display and OpenCV highgui
     """Create the display window with mouse callback and tuning sliders.
     Slider values are read back every frame, so moving them takes effect
     immediately."""
-    cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+    # WINDOW_GUI_NORMAL disables Qt's expanded GUI (status bar, toolbar,
+    # pixel picker). The pixel picker repaints on every mouse-move over
+    # the image, which tanks the framerate on the Pi while hovering
+    cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
     cv2.resizeWindow(WINDOW_NAME, *PREVIEW_RESOLUTION)
     cv2.setMouseCallback(WINDOW_NAME, ui.on_mouse)
     cv2.createTrackbar(NOISE_TRACKBAR, WINDOW_NAME,
