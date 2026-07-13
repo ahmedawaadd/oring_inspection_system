@@ -47,10 +47,9 @@ Test layout mirrors the source: `tests/test_vision.py` covers the comparison mat
 ## How to use
 
 1. Press **`1`** or **`2`**, then click and drag on the live preview to draw a box around an O-ring. Let go, and the camera takes a high-resolution photo and saves it as the reference for that slot.
-2. On startup the tool asks for a barcode. Scan (or type) the part's barcode; it submits automatically once the full code is entered — no ENTER needed.
-3. Place the part under the camera and press **`SPACE`** to inspect. The tool compares the current view to the reference and shows **PASS** or **FAIL**.
-4. On a **FAIL**, the barcode stays put — re-inspect the same part until it passes. On a **PASS**, the tool prompts for the next barcode, so parts advance one at a time like a production line.
-5. Press **`Q`** to quit.
+2. Place a new part under the camera.
+3. Press **`SPACE`** to inspect. The tool compares the current view to the reference and shows **PASS** or **FAIL**.
+4. Press **`Q`** to quit.
 
 Use the two slider bars to tune sensitivity:
 - **Noise filter**: ignore small differences caused by dust or lighting changes

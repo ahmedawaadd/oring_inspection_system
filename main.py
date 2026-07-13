@@ -20,10 +20,10 @@ import cv2
 import storage
 import ui
 from camera import capture_still, create_camera
-from config import (BARCODE_LENGTH, DEFAULT_DIFF_THRESHOLD,
-                    DEFAULT_NOISE_THRESHOLD, DIFF_TRACKBAR, GRAB_SCANNER,
-                    NOISE_TRACKBAR, PREVIEW_RESOLUTION, SCANNER_DEVICE,
-                    SCANNER_NAME, WINDOW_NAME)
+from config import (DEFAULT_DIFF_THRESHOLD, DEFAULT_NOISE_THRESHOLD,
+                    DIFF_TRACKBAR, GRAB_SCANNER, NOISE_TRACKBAR,
+                    PREVIEW_RESOLUTION, SCANNER_DEVICE, SCANNER_NAME_HINT,
+                    WINDOW_NAME)
 from scanner import BarcodeScanner
 from vision import compare, crop, make_thumb, normalise_rect, preprocess
 
@@ -32,10 +32,7 @@ def setup_window():  # pragma: no cover, requires a display and OpenCV highgui
     """Create the display window with mouse callback and tuning sliders.
     Slider values are read back every frame, so moving them takes effect
     immediately."""
-    # WINDOW_GUI_NORMAL disables Qt's expanded GUI (status bar, toolbar,
-    # pixel picker). The pixel picker repaints on every mouse-move over
-    # the image, which tanks the framerate on the Pi while hovering
-    cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
+    cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(WINDOW_NAME, *PREVIEW_RESOLUTION)
     cv2.setMouseCallback(WINDOW_NAME, ui.on_mouse)
     cv2.createTrackbar(NOISE_TRACKBAR, WINDOW_NAME,
@@ -70,22 +67,10 @@ def handle_completed_roi(cam, rois, refs, thumbs, sample_crops, live_results):
     ui.mouse["active_slot"] = None
 
 
-def _commit_barcode(popup, text):
-    """Accept `text` as the current barcode: close the popup and clear its
-    state. Returns the barcode so callers can update their own variable."""
-    popup.update(active=False, text="", error="")
-    print(f"Barcode set to {text}")
-    return text
-
-
 def handle_popup_key(key, popup, scanner, barcode):
     """Handle one keypress while the barcode popup is open. The scanner is
     read separately via evdev, so this only covers manual typing plus ESC
     to cancel. Human typing is slow enough for one key per frame.
-
-    Typing (or scanning) a full BARCODE_LENGTH code auto-commits it, so no
-    ENTER press is needed; ENTER still works as a manual fallback for
-    shorter codes or scanners that append their own terminator.
     Returns the (possibly updated) current barcode."""
     if key == 27:  # ESC
         # Only allow closing the popup if a barcode is already set
@@ -96,40 +81,18 @@ def handle_popup_key(key, popup, scanner, barcode):
         # append its own ENTER terminator
         text = popup["text"] or scanner.take_buffer()
         if text:
-            barcode = _commit_barcode(popup, text)
+            barcode = text
+            popup.update(active=False, text="", error="")
+            print(f"Barcode set to {barcode}")
         else:
             popup["error"] = "Barcode cannot be empty"
     elif key == 8:  # BACKSPACE
         popup["text"] = popup["text"][:-1]
         popup["error"] = ""
     elif (48 <= key <= 57 or 65 <= key <= 90 or 97 <= key <= 122) \
-            and len(popup["text"]) < BARCODE_LENGTH:  # digits, A-Z, a-z
+            and len(popup["text"]) < 20:  # digits, A-Z, a-z
         popup["text"] += chr(key)
         popup["error"] = ""
-        # Auto-commit as soon as the fixed-length barcode is complete
-        if len(popup["text"]) >= BARCODE_LENGTH:
-            barcode = _commit_barcode(popup, popup["text"])
-    return barcode
-
-
-def poll_scanner(scanner, popup, barcode):
-    """Accept barcode-scanner input, but only while the popup is open, so a
-    new barcode is taken only when the system is actually asking for one.
-    A scan is committed either when the scanner appends its own ENTER (it
-    arrives on the results queue) or, for scanners without a terminator, as
-    soon as the assembled buffer reaches BARCODE_LENGTH. Returns the
-    (possibly updated) barcode."""
-    if not popup["active"]:
-        return barcode
-    # Completed scans (scanner appended ENTER)
-    try:
-        while True:
-            barcode = _commit_barcode(popup, scanner.results.get_nowait())
-    except queue.Empty:
-        pass
-    # Partial scan with no terminator that has reached the barcode length
-    if popup["active"] and len(scanner.snapshot()) >= BARCODE_LENGTH:
-        barcode = _commit_barcode(popup, scanner.take_buffer())
     return barcode
 
 
@@ -173,7 +136,7 @@ def main():  # pragma: no cover, drives real camera and GUI; logic lives in the 
 
     # Falls back to manual typing if no scanner is present
     scanner = BarcodeScanner(device_path=SCANNER_DEVICE,
-                             name=SCANNER_NAME, grab=GRAB_SCANNER)
+                             name_hint=SCANNER_NAME_HINT, grab=GRAB_SCANNER)
 
     try:
         while True:
@@ -181,9 +144,15 @@ def main():  # pragma: no cover, drives real camera and GUI; logic lives in the 
             noise_thresh = cv2.getTrackbarPos(NOISE_TRACKBAR, WINDOW_NAME)
             diff_thresh = cv2.getTrackbarPos(DIFF_TRACKBAR, WINDOW_NAME) / 10.0
 
-            # Take scanner input only while the popup is asking for a
-            # barcode, so a new part is accepted only between inspections
-            current_barcode = poll_scanner(scanner, popup, current_barcode)
+            # Apply any completed scan. Scanning always sets the barcode
+            # and closes the popup, whether or not it was open
+            try:
+                while True:
+                    current_barcode = scanner.results.get_nowait()
+                    popup.update(active=False, text="", error="")
+                    print(f"Barcode scanned: {current_barcode}")
+            except queue.Empty:
+                pass
 
             # Act on a finished ROI draw (mouse released)
             if ui.mouse["roi_ready"] and ui.mouse["active_slot"] is not None:
@@ -223,6 +192,9 @@ def main():  # pragma: no cover, drives real camera and GUI; logic lives in the 
             if key == ord('q'):
                 break
 
+            elif key == ord('b'):
+                popup.update(active=True, text="", error="")
+
             elif key in (ord('1'), ord('2')):
                 # Arm ROI drawing for the chosen slot
                 ui.mouse["active_slot"] = int(chr(key))
@@ -256,14 +228,6 @@ def main():  # pragma: no cover, drives real camera and GUI; logic lives in the 
                 storage.save_inspection(current_barcode, display,
                                         per_slot, overall_passed)
                 ui.flash_result(display, overall_passed, per_slot)
-
-                # A pass advances the production line: clear the barcode and
-                # prompt for the next part. A fail keeps the same barcode so
-                # the operator re-inspects until it passes.
-                if overall_passed:
-                    print(f"{current_barcode} passed. Scan the next barcode.")
-                    current_barcode = None
-                    popup.update(active=True, text="", error="")
 
     finally:
         # Always release the camera, scanner, and windows, even on exception

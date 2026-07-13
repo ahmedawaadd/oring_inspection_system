@@ -5,7 +5,6 @@ Tests for main.py helpers plus an end-to-end workflow test that
 drives ROI capture, inspection, and logging against a fake camera."""
 
 import os
-import queue
 
 import cv2
 import numpy as np
@@ -37,24 +36,6 @@ class BufferedScanner:
         return buf
 
 
-class PollScanner:
-    """Scanner double for poll_scanner: a results queue for completed scans
-    plus a snapshot/take_buffer pair for an un-terminated partial scan."""
-
-    def __init__(self, completed=(), partial=""):
-        self.results = queue.Queue()
-        for code in completed:
-            self.results.put(code)
-        self._partial = partial
-
-    def snapshot(self):
-        return self._partial
-
-    def take_buffer(self):
-        buf, self._partial = self._partial, ""
-        return buf
-
-
 @pytest.fixture
 def popup():
     return {"active": True, "text": "", "error": ""}
@@ -73,34 +54,11 @@ def test_typing_appends_characters(popup):
     assert bc is None  # nothing committed yet
 
 
-def test_typing_auto_commits_at_barcode_length(popup):
-    # A full-length barcode submits on its own, no ENTER needed
+def test_text_capped_at_20_characters(popup):
     s = NoBufferScanner()
-    bc = None
-    for ch in "ABC1234":  # BARCODE_LENGTH == 7 characters
-        bc = main.handle_popup_key(ord(ch), popup, s, bc)
-    assert bc == "ABC1234"
-    assert not popup["active"]
-    assert popup["text"] == ""
-
-
-def test_typing_does_not_commit_before_barcode_length(popup):
-    s = NoBufferScanner()
-    bc = None
-    for ch in "ABC12":  # one short of the length
-        bc = main.handle_popup_key(ord(ch), popup, s, bc)
-    assert bc is None
-    assert popup["active"]
-    assert popup["text"] == "ABC12"
-
-
-def test_typing_cannot_exceed_barcode_length(popup):
-    # The length-limited field never accepts more than a full barcode
-    s = NoBufferScanner()
-    for ch in "ABCDEFG":  # exactly the length, commits and clears
-        main.handle_popup_key(ord(ch), popup, s, None)
-    assert config.BARCODE_LENGTH == 7
-    assert not popup["active"]
+    for _ in range(25):
+        main.handle_popup_key(ord('X'), popup, s, None)
+    assert len(popup["text"]) == 20
 
 
 def test_non_alphanumeric_keys_ignored(popup):
@@ -160,43 +118,6 @@ def test_esc_blocked_until_barcode_set(popup):
 def test_esc_closes_when_barcode_already_set(popup):
     bc = main.handle_popup_key(ESC, popup, NoBufferScanner(), "OLD1")
     assert bc == "OLD1"  # existing barcode kept
-    assert not popup["active"]
-
-
-# Scanner polling (only accepted while the popup is open)
-
-def test_poll_scanner_commits_completed_scan(popup):
-    # A scan terminated by the scanner's own ENTER arrives on the queue
-    s = PollScanner(completed=["ABC1234"])
-    bc = main.poll_scanner(s, popup, None)
-    assert bc == "ABC1234"
-    assert not popup["active"]
-
-
-def test_poll_scanner_auto_commits_partial_at_length(popup):
-    # A scanner with no ENTER terminator: the buffer reached the barcode
-    # length, so it commits without waiting
-    s = PollScanner(partial="ABC1234")
-    bc = main.poll_scanner(s, popup, None)
-    assert bc == "ABC1234"
-    assert not popup["active"]
-    assert s.snapshot() == ""  # buffer was consumed
-
-
-def test_poll_scanner_ignores_partial_below_length(popup):
-    s = PollScanner(partial="ABC12")
-    bc = main.poll_scanner(s, popup, None)
-    assert bc is None
-    assert popup["active"]
-
-
-def test_poll_scanner_ignored_while_popup_closed():
-    # Between the accepted barcode and the next pass the popup is closed;
-    # scans must not change the current barcode
-    popup = {"active": False, "text": "", "error": ""}
-    s = PollScanner(completed=["NEW5678"], partial="XYZ9999")
-    bc = main.poll_scanner(s, popup, "OLD1234")
-    assert bc == "OLD1234"
     assert not popup["active"]
 
 
