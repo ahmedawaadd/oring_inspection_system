@@ -35,7 +35,7 @@ class BarcodeScanner:
     found this does nothing and manual keyboard entry still works.
     """
 
-    def __init__(self, device_path=None, name_hint="scanner", grab=True):
+    def __init__(self, device_path=None, name_hint="Honeywell 1950g", grab=True):
         self.results = queue.Queue()
         self._buffer = ""
         self._lock = threading.Lock()
@@ -74,8 +74,16 @@ class BarcodeScanner:
 
     @staticmethod
     def _autodetect(InputDevice, ecodes, list_devices, name_hint):
-        """Find a device that looks like a scanner. A scanner looks like a
-        keyboard: it can produce ENTER and letter keys."""
+        """Find the barcode scanner among the input devices.
+
+        A scanner presents itself as a keyboard (it can produce ENTER and
+        letter keys), so capabilities alone cannot tell it apart from the
+        operator's real keyboard or a mouse that exposes extra keys. To
+        avoid grabbing the wrong device we match on the device name: when
+        name_hint is set (e.g. "Honeywell 1950g") we select only a device
+        whose name contains it. If a hint is set but nothing matches we
+        return None and let the app fall back to manual entry, rather than
+        hijacking whatever keyboard-like device happens to be first."""
         candidates = []
         for path in list_devices():
             try:
@@ -85,11 +93,14 @@ class BarcodeScanner:
             keys = dev.capabilities().get(ecodes.EV_KEY, [])
             if ecodes.KEY_ENTER in keys and ecodes.KEY_A in keys:
                 candidates.append(dev)
-        # Prefer a device whose name hints it's a scanner, so we don't
-        # grab a regular keyboard if one is also attached
-        for dev in candidates:
-            if name_hint and name_hint.lower() in dev.name.lower():
-                return dev.path
+        # Match on name so we grab the scanner, not a keyboard or mouse.
+        if name_hint:
+            for dev in candidates:
+                if name_hint.lower() in dev.name.lower():
+                    return dev.path
+            # Nothing matched the hint: don't risk grabbing the wrong device.
+            return None
+        # No hint configured: fall back to the first keyboard-like device.
         return candidates[0].path if candidates else None
 
     def _run(self):

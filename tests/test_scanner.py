@@ -158,20 +158,42 @@ def test_snapshot_does_not_clear():
 
 # Autodetection
 
-def test_autodetect_prefers_name_hint():
+def test_autodetect_matches_name_hint():
     devices = {
         "/dev/input/event0": FakeDevice("/dev/input/event0", "AT Keyboard"),
-        "/dev/input/event1": FakeDevice("/dev/input/event1", "XYZ Barcode Scanner"),
+        "/dev/input/event1": FakeDevice("/dev/input/event1", "Honeywell 1950g"),
     }
     found = scanner.BarcodeScanner._autodetect(
-        devices.__getitem__, FakeEcodes, devices.keys, "scanner")
+        devices.__getitem__, FakeEcodes, devices.keys, "Honeywell 1950g")
     assert found == "/dev/input/event1"
 
 
-def test_autodetect_falls_back_to_first_candidate():
+def test_autodetect_returns_none_when_hint_matches_nothing():
+    # A keyboard is present but the named scanner is not: rather than
+    # grabbing the keyboard, detection must give up so manual entry works
     devices = {"/dev/input/event0": FakeDevice("/dev/input/event0", "Some Keyboard")}
     found = scanner.BarcodeScanner._autodetect(
-        devices.__getitem__, FakeEcodes, devices.keys, "scanner")
+        devices.__getitem__, FakeEcodes, devices.keys, "Honeywell 1950g")
+    assert found is None
+
+
+def test_autodetect_does_not_grab_keyboard_when_scanner_absent():
+    # Both a keyboard and a mouse-with-keys are attached but no scanner;
+    # neither must be selected
+    devices = {
+        "/dev/input/event0": FakeDevice("/dev/input/event0", "AT Translated Set 2 keyboard"),
+        "/dev/input/event1": FakeDevice("/dev/input/event1", "Logitech USB Mouse"),
+    }
+    found = scanner.BarcodeScanner._autodetect(
+        devices.__getitem__, FakeEcodes, devices.keys, "Honeywell 1950g")
+    assert found is None
+
+
+def test_autodetect_falls_back_to_first_candidate_without_hint():
+    # With no hint configured the first keyboard-like device is used
+    devices = {"/dev/input/event0": FakeDevice("/dev/input/event0", "Some Keyboard")}
+    found = scanner.BarcodeScanner._autodetect(
+        devices.__getitem__, FakeEcodes, devices.keys, None)
     assert found == "/dev/input/event0"
 
 
