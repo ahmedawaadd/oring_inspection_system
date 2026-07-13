@@ -67,7 +67,7 @@ def draw_overlay(frame, rois, refs, live_results, thumbs, barcode,
     # Top bar (50 px): barcode on the left, thresholds on the right
     _dark_panel(frame, 0, 0, w, 50)
 
-    bc_text = f"BARCODE  #{barcode}" if barcode is not None else "BARCODE:  (press B)"
+    bc_text = f"BARCODE  #{barcode}" if barcode is not None else "BARCODE:  (scan part)"
     cv2.putText(frame, bc_text, (16, 34),
                 cv2.FONT_HERSHEY_DUPLEX, 0.95, YELLOW, 2, cv2.LINE_AA)
 
@@ -87,7 +87,7 @@ def draw_overlay(frame, rois, refs, live_results, thumbs, barcode,
         cv2.putText(frame, hint, (16, bar_y + 24),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.53, YELLOW, 1, cv2.LINE_AA)
     else:
-        ctrl = "1 / 2: Draw reference     SPACE: Inspect     B: Set barcode     Q: Quit"
+        ctrl = "1 / 2: Draw reference     SPACE: Inspect     Q: Quit"
         cv2.putText(frame, ctrl, (16, bar_y + 24),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.50, GRAY, 1, cv2.LINE_AA)
 
@@ -169,7 +169,7 @@ def draw_barcode_popup(frame, text, error):
     cv2.putText(frame, text + "|", (ix1 + 12, iy2 - 14),
                 cv2.FONT_HERSHEY_DUPLEX, 1.4, YELLOW, 2, cv2.LINE_AA)
 
-    cv2.putText(frame, "ENTER to confirm    ESC to cancel    (scan or type)",
+    cv2.putText(frame, "Scan or type the barcode - submits automatically",
                 (dx + 16, dy + 158),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.46, GRAY, 1, cv2.LINE_AA)
 
