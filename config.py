@@ -34,9 +34,9 @@ WINDOW_NAME = "O-ring Inspection"
 THUMB_W, THUMB_H = 110, 75
 
 # Barcode scanner, read directly from its input device via evdev
-SCANNER_DEVICE = None          # explicit /dev/input/eventX path, or None to auto-detect
-SCANNER_NAME_HINT = "scanner"  # prefer a device whose name contains this (case-insensitive)
-GRAB_SCANNER = True            # take exclusive access so scans don't leak to other windows
+SCANNER_DEVICE = None             # explicit /dev/input/eventX path, or None to look up by name
+SCANNER_NAME = "Honeywell 1950g"  # connect only to the device with this name (case-insensitive)
+GRAB_SCANNER = True               # take exclusive access so scans don't leak to other windows
 
 # Colours in BGR order because OpenCV uses BGR, not RGB
 GREEN = (60, 200, 60)
