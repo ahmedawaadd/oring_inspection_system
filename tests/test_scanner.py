@@ -2,7 +2,7 @@
 test_scanner.py
 
 Tests for scanner.py. The evdev protocol is faked with small doubles
-so key assembly, shift handling, and autodetection are tested without
+so key assembly, shift handling, and name lookup are tested without
 hardware or real threads."""
 
 import queue
@@ -156,38 +156,47 @@ def test_snapshot_does_not_clear():
     assert s.snapshot() == "a"
 
 
-# Autodetection
+# Device lookup by name
 
-def test_autodetect_prefers_name_hint():
+def test_find_by_name_selects_the_named_scanner():
     devices = {
         "/dev/input/event0": FakeDevice("/dev/input/event0", "AT Keyboard"),
-        "/dev/input/event1": FakeDevice("/dev/input/event1", "XYZ Barcode Scanner"),
+        "/dev/input/event1": FakeDevice("/dev/input/event1", "Honeywell 1950g"),
     }
-    found = scanner.BarcodeScanner._autodetect(
-        devices.__getitem__, FakeEcodes, devices.keys, "scanner")
+    found = scanner.BarcodeScanner._find_by_name(
+        devices.__getitem__, devices.keys, "Honeywell 1950g")
     assert found == "/dev/input/event1"
 
 
-def test_autodetect_falls_back_to_first_candidate():
-    devices = {"/dev/input/event0": FakeDevice("/dev/input/event0", "Some Keyboard")}
-    found = scanner.BarcodeScanner._autodetect(
-        devices.__getitem__, FakeEcodes, devices.keys, "scanner")
+def test_find_by_name_is_case_insensitive():
+    devices = {"/dev/input/event0": FakeDevice("/dev/input/event0", "Honeywell 1950g Keyboard")}
+    found = scanner.BarcodeScanner._find_by_name(
+        devices.__getitem__, devices.keys, "honeywell 1950g")
     assert found == "/dev/input/event0"
 
 
-def test_autodetect_skips_non_keyboard_devices():
-    # A mouse has no ENTER or letter keys and must not be selected
-    devices = {"/dev/input/event0": FakeDevice("/dev/input/event0", "Mouse", keys=[])}
-    found = scanner.BarcodeScanner._autodetect(
-        devices.__getitem__, FakeEcodes, devices.keys, "scanner")
+def test_find_by_name_ignores_keyboard_and_mouse():
+    # Only the scanner may be selected; a keyboard or mouse must never be
+    devices = {
+        "/dev/input/event0": FakeDevice("/dev/input/event0", "AT Translated Set 2 keyboard"),
+        "/dev/input/event1": FakeDevice("/dev/input/event1", "Logitech USB Mouse"),
+    }
+    found = scanner.BarcodeScanner._find_by_name(
+        devices.__getitem__, devices.keys, "Honeywell 1950g")
     assert found is None
 
 
-def test_autodetect_skips_unopenable_devices():
+def test_find_by_name_returns_none_when_absent():
+    found = scanner.BarcodeScanner._find_by_name(
+        lambda: [], lambda: [], "Honeywell 1950g")
+    assert found is None
+
+
+def test_find_by_name_skips_unopenable_devices():
     def raise_oserror(path):
         raise OSError("permission denied")
-    found = scanner.BarcodeScanner._autodetect(
-        raise_oserror, FakeEcodes, lambda: ["/dev/input/event0"], "scanner")
+    found = scanner.BarcodeScanner._find_by_name(
+        raise_oserror, lambda: ["/dev/input/event0"], "Honeywell 1950g")
     assert found is None
 
 
@@ -204,8 +213,8 @@ def test_missing_evdev_degrades_gracefully(monkeypatch):
 
 
 def test_full_construction_with_fake_evdev(monkeypatch):
-    # End to end: autodetect, grab, background thread, one scan
-    device = FakeDevice(name="USB Scanner",
+    # End to end: look up by name, grab, background thread, one scan
+    device = FakeDevice(name="Honeywell 1950g",
                         events=[key(FakeEcodes.KEY_A), key(FakeEcodes.KEY_ENTER)])
     fake_evdev = types.ModuleType("evdev")
     fake_evdev.InputDevice = lambda path: device
@@ -213,8 +222,8 @@ def test_full_construction_with_fake_evdev(monkeypatch):
     fake_evdev.list_devices = lambda: [device.path]
     monkeypatch.setitem(sys.modules, "evdev", fake_evdev)
 
-    s = scanner.BarcodeScanner(name_hint="scanner", grab=True)
-    assert s.name == "USB Scanner"
+    s = scanner.BarcodeScanner(name="Honeywell 1950g", grab=True)
+    assert s.name == "Honeywell 1950g"
     assert device.grabbed
     assert s.results.get(timeout=2) == "a"
     s.close()
