@@ -35,7 +35,7 @@ class BarcodeScanner:
     found this does nothing and manual keyboard entry still works.
     """
 
-    def __init__(self, device_path=None, name_hint="scanner", grab=True):
+    def __init__(self, device_path=None, name="Honeywell 1950g", grab=True):
         self.results = queue.Queue()
         self._buffer = ""
         self._lock = threading.Lock()
@@ -53,9 +53,9 @@ class BarcodeScanner:
         self._keymap = _build_keymap(ecodes)
 
         if device_path is None:
-            device_path = self._autodetect(InputDevice, ecodes, list_devices, name_hint)
+            device_path = self._find_by_name(InputDevice, list_devices, name)
         if device_path is None:
-            print("No barcode scanner found. Type the barcode manually.")
+            print(f"Barcode scanner '{name}' not found. Type the barcode manually.")
             return
 
         try:
@@ -73,24 +73,23 @@ class BarcodeScanner:
         threading.Thread(target=self._run, daemon=True).start()
 
     @staticmethod
-    def _autodetect(InputDevice, ecodes, list_devices, name_hint):
-        """Find a device that looks like a scanner. A scanner looks like a
-        keyboard: it can produce ENTER and letter keys."""
-        candidates = []
+    def _find_by_name(InputDevice, list_devices, name):
+        """Return the path of the input device whose name matches `name`.
+
+        The scanner enumerates as a keyboard, so it is indistinguishable
+        from the operator's real keyboard or mouse by capabilities alone.
+        We connect to it by name only ("Honeywell 1950g"), matched
+        case-insensitively, so a keyboard or mouse is never grabbed. If no
+        matching device is present we return None and the app falls back to
+        manual entry."""
         for path in list_devices():
             try:
                 dev = InputDevice(path)
             except OSError:
                 continue
-            keys = dev.capabilities().get(ecodes.EV_KEY, [])
-            if ecodes.KEY_ENTER in keys and ecodes.KEY_A in keys:
-                candidates.append(dev)
-        # Prefer a device whose name hints it's a scanner, so we don't
-        # grab a regular keyboard if one is also attached
-        for dev in candidates:
-            if name_hint and name_hint.lower() in dev.name.lower():
+            if name.lower() in dev.name.lower():
                 return dev.path
-        return candidates[0].path if candidates else None
+        return None
 
     def _run(self):
         """Background thread: assemble key events into barcode strings."""
