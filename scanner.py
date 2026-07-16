@@ -13,6 +13,7 @@ assemble the characters ourselves until the scanner sends ENTER.
 
 import queue
 import threading
+import time
 
 
 def _build_keymap(ecodes):
@@ -35,9 +36,12 @@ class BarcodeScanner:
     found this does nothing and manual keyboard entry still works.
     """
 
-    def __init__(self, device_path=None, name="Honeywell 1950g", grab=True):
+    def __init__(self, device_path=None, name="Honeywell 1950g", grab=True,
+                 settle=0.1):
         self.results = queue.Queue()
         self._buffer = ""
+        self._last_key = 0.0   # monotonic time of the last buffered character
+        self._settle = settle  # quiet period before the buffer may be read
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self.device = None
@@ -118,6 +122,7 @@ class BarcodeScanner:
                     if ch is not None:
                         with self._lock:
                             self._buffer += ch.upper() if shift else ch
+                            self._last_key = time.monotonic()
         except OSError:
             pass  # device unplugged or closed
 
@@ -134,6 +139,29 @@ class BarcodeScanner:
         with self._lock:
             buf, self._buffer = self._buffer, ""
         return buf
+
+    def settled(self):
+        """True once no character has arrived for the settle window. A
+        scanner types its whole burst with only milliseconds between keys,
+        so a short quiet gap means the scan is finished; reading the
+        buffer mid-burst would split one scan into a barcode now and a
+        stray tail for the next part."""
+        with self._lock:
+            return time.monotonic() - self._last_key >= self._settle
+
+    def flush(self):
+        """Discard any completed scans and partial input. Called when the
+        barcode popup opens: ignoring the scanner while the popup is
+        closed is not the same as emptying it, and anything scanned while
+        the system wasn't asking must not be mistaken for an answer to
+        the popup that is asking now."""
+        with self._lock:
+            self._buffer = ""
+        try:
+            while True:
+                self.results.get_nowait()
+        except queue.Empty:
+            pass
 
     def close(self):
         """Stop the reader thread and release the device."""

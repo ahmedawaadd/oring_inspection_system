@@ -66,12 +66,14 @@ def key(code, value=1):
     return FakeEvent(FakeEcodes.EV_KEY, code, value)
 
 
-def run_scanner(events):
+def run_scanner(events, settle=0.1):
     """Build a scanner around a fake device and run _run synchronously.
     Bypasses __init__ so no real evdev or thread is involved."""
     s = scanner.BarcodeScanner.__new__(scanner.BarcodeScanner)
     s.results = queue.Queue()
     s._buffer = ""
+    s._last_key = 0.0
+    s._settle = settle
     s._lock = threading.Lock()
     s._stop = threading.Event()
     s._ecodes = FakeEcodes
@@ -156,6 +158,28 @@ def test_snapshot_does_not_clear():
     assert s.snapshot() == "a"
 
 
+def test_flush_discards_buffer_and_queued_scans():
+    # One completed scan on the queue plus a partial in the buffer; both
+    # must vanish so a reopened popup starts from a clean slate
+    s = run_scanner([key(FakeEcodes.KEY_1), key(FakeEcodes.KEY_ENTER),
+                     key(FakeEcodes.KEY_A)])
+    s.flush()
+    assert s.results.empty()
+    assert s.snapshot() == ""
+
+
+def test_not_settled_right_after_a_character():
+    # A character just arrived, so the burst may still be in progress
+    s = run_scanner([key(FakeEcodes.KEY_A)], settle=10.0)
+    assert not s.settled()
+
+
+def test_settled_once_the_buffer_has_been_quiet():
+    s = run_scanner([key(FakeEcodes.KEY_A)], settle=0.05)
+    s._last_key -= 1.0  # pretend the last character arrived a second ago
+    assert s.settled()
+
+
 # Device lookup by name
 
 def test_find_by_name_selects_the_named_scanner():
@@ -209,6 +233,9 @@ def test_missing_evdev_degrades_gracefully(monkeypatch):
     s = scanner.BarcodeScanner()
     assert s.device is None
     assert s.snapshot() == ""
+    # The main loop still calls these on a disabled scanner every frame
+    assert s.settled()
+    s.flush()
     s.close()  # must not raise
 
 

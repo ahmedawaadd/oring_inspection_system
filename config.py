@@ -42,6 +42,13 @@ GRAB_SCANNER = True               # take exclusive access so scans don't leak to
 # many characters have been scanned or typed, so no ENTER press is needed.
 BARCODE_LENGTH = 7
 
+# How long the scan buffer must be quiet before it is read. A scanner
+# "types" its whole burst with only a few ms between characters, so this
+# much silence means the scan is over; reading sooner could take the
+# first BARCODE_LENGTH characters of a longer code and leave its tail
+# behind as a phantom barcode for the next part.
+SCANNER_SETTLE_SECONDS = 0.1
+
 # Colours in BGR order because OpenCV uses BGR, not RGB
 GREEN = (60, 200, 60)
 RED = (50, 50, 220)

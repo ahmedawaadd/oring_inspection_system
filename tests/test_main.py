@@ -39,20 +39,30 @@ class BufferedScanner:
 
 class PollScanner:
     """Scanner double for poll_scanner: a results queue for completed scans
-    plus a snapshot/take_buffer pair for an un-terminated partial scan."""
+    plus a snapshot/take_buffer pair for an un-terminated partial scan.
+    settled defaults to True; pass False to simulate a scan mid-burst."""
 
-    def __init__(self, completed=(), partial=""):
+    def __init__(self, completed=(), partial="", settled=True):
         self.results = queue.Queue()
         for code in completed:
             self.results.put(code)
         self._partial = partial
+        self._settled = settled
 
     def snapshot(self):
         return self._partial
 
+    def settled(self):
+        return self._settled
+
     def take_buffer(self):
         buf, self._partial = self._partial, ""
         return buf
+
+    def flush(self):
+        self._partial = ""
+        while not self.results.empty():
+            self.results.get_nowait()
 
 
 @pytest.fixture
@@ -120,26 +130,31 @@ def test_backspace_removes_last_char_and_clears_error(popup):
     assert popup["error"] == ""
 
 
-def test_enter_commits_typed_text(popup):
+def test_enter_rejects_short_typed_text(popup):
+    # A truncated code in the log is worse than a rejected one: ENTER on
+    # anything but a full-length barcode must refuse, and keep the typed
+    # text so the operator can finish it
     s = NoBufferScanner()
-    main.handle_popup_key(ord('A'), popup, s, None)
+    for ch in "ABC":
+        main.handle_popup_key(ord(ch), popup, s, None)
     bc = main.handle_popup_key(ENTER, popup, s, None)
-    assert bc == "A"
-    assert not popup["active"]
+    assert bc is None
+    assert popup["active"]
+    assert popup["error"] == "Barcode must be 7 characters"
+    assert popup["text"] == "ABC"
 
 
 def test_numpad_enter_also_commits(popup):
-    s = NoBufferScanner()
-    main.handle_popup_key(ord('B'), popup, s, None)
-    bc = main.handle_popup_key(10, popup, s, None)
-    assert bc == "B"
+    bc = main.handle_popup_key(10, popup, BufferedScanner("SCAN999"), None)
+    assert bc == "SCAN999"
+    assert not popup["active"]
 
 
 def test_enter_falls_back_to_scanner_buffer(popup):
     # Covers scanners not configured to append their own ENTER: the
     # operator scans, then presses ENTER manually
-    bc = main.handle_popup_key(ENTER, popup, BufferedScanner("SCAN99"), None)
-    assert bc == "SCAN99"
+    bc = main.handle_popup_key(ENTER, popup, BufferedScanner("SCAN999"), None)
+    assert bc == "SCAN999"
     assert not popup["active"]
 
 
@@ -198,6 +213,58 @@ def test_poll_scanner_ignored_while_popup_closed():
     bc = main.poll_scanner(s, popup, "OLD1234")
     assert bc == "OLD1234"
     assert not popup["active"]
+
+
+def test_poll_scanner_waits_for_scan_to_settle(popup):
+    # A full-length buffer that is still growing is a scan in flight;
+    # taking it now would split one long scan into two barcodes
+    s = PollScanner(partial="ABC1234", settled=False)
+    bc = main.poll_scanner(s, popup, None)
+    assert bc is None
+    assert popup["active"]
+    assert s.snapshot() == "ABC1234"  # left intact for the next poll
+
+
+def test_poll_scanner_rejects_overlength_buffer(popup):
+    # A settled buffer longer than BARCODE_LENGTH is one scan of the
+    # wrong kind of code, not a barcode plus spare characters
+    s = PollScanner(partial="ABCDEFGHIJ")
+    bc = main.poll_scanner(s, popup, None)
+    assert bc is None
+    assert popup["active"]
+    assert popup["error"] == "Barcode must be 7 characters"
+
+
+def test_poll_scanner_rejects_wrong_length_completed_scan(popup):
+    # Regression: the tail of a split scan ("HIJ" of "ABCDEFGHIJ") used
+    # to be committed as the next part's barcode
+    s = PollScanner(completed=["HIJ"])
+    bc = main.poll_scanner(s, popup, None)
+    assert bc is None
+    assert popup["active"]
+    assert popup["error"] == "Barcode must be 7 characters"
+
+
+# Popup opening (must discard scanner input collected while closed)
+
+def test_open_popup_discards_scans_made_while_closed():
+    # Regression: a scan made while no popup was open used to sit in the
+    # queue and get committed, sight unseen, the moment the popup reopened
+    s = PollScanner(completed=["STRAY77"], partial="ABC1234")
+    popup = {"active": False, "text": "", "error": ""}
+
+    main.open_popup(popup, s)
+    bc = main.poll_scanner(s, popup, None)
+
+    assert bc is None
+    assert popup["active"]  # still waiting for a real scan
+
+
+def test_open_popup_resets_text_and_sets_error():
+    popup = {"active": False, "text": "stale", "error": ""}
+    main.open_popup(popup, PollScanner(), error="Set a barcode before inspecting")
+    assert popup == {"active": True, "text": "",
+                     "error": "Set a barcode before inspecting"}
 
 
 # ROI capture

@@ -23,7 +23,7 @@ from camera import capture_still, create_camera
 from config import (BARCODE_LENGTH, DEFAULT_DIFF_THRESHOLD,
                     DEFAULT_NOISE_THRESHOLD, DIFF_TRACKBAR, GRAB_SCANNER,
                     NOISE_TRACKBAR, PREVIEW_RESOLUTION, SCANNER_DEVICE,
-                    SCANNER_NAME, WINDOW_NAME)
+                    SCANNER_NAME, SCANNER_SETTLE_SECONDS, WINDOW_NAME)
 from scanner import BarcodeScanner
 from vision import compare, crop, make_thumb, normalise_rect, preprocess
 
@@ -70,6 +70,16 @@ def handle_completed_roi(cam, rois, refs, thumbs, sample_crops, live_results):
     ui.mouse["active_slot"] = None
 
 
+def open_popup(popup, scanner, error=""):
+    """Open the barcode popup, discarding anything the scanner collected
+    while it was closed. Ignoring the scanner between popups is not the
+    same as emptying it: without this flush, a stray scan made while no
+    barcode was being asked for would be committed the instant the popup
+    reopens, logging the next part under the wrong barcode."""
+    scanner.flush()
+    popup.update(active=True, text="", error=error)
+
+
 def _commit_barcode(popup, text):
     """Accept `text` as the current barcode: close the popup and clear its
     state. Returns the barcode so callers can update their own variable."""
@@ -78,14 +88,27 @@ def _commit_barcode(popup, text):
     return text
 
 
+def _accept_barcode(popup, text, barcode):
+    """Commit `text` if it is exactly BARCODE_LENGTH characters, otherwise
+    reject it with a visible error. Quietly accepting a truncated or
+    over-long code would put wrong data in the inspection log, which is
+    far worse than making the operator rescan. Returns the (possibly
+    updated) current barcode."""
+    if len(text) == BARCODE_LENGTH:
+        return _commit_barcode(popup, text)
+    popup["error"] = f"Barcode must be {BARCODE_LENGTH} characters"
+    return barcode
+
+
 def handle_popup_key(key, popup, scanner, barcode):
     """Handle one keypress while the barcode popup is open. The scanner is
     read separately via evdev, so this only covers manual typing plus ESC
     to cancel. Human typing is slow enough for one key per frame.
 
     Typing (or scanning) a full BARCODE_LENGTH code auto-commits it, so no
-    ENTER press is needed; ENTER still works as a manual fallback for
-    shorter codes or scanners that append their own terminator.
+    ENTER press is needed; ENTER still works as a manual fallback for a
+    scanner that doesn't append its own terminator. Anything that isn't
+    exactly BARCODE_LENGTH characters is rejected, not committed.
     Returns the (possibly updated) current barcode."""
     if key == 27:  # ESC
         # Only allow closing the popup if a barcode is already set
@@ -93,10 +116,11 @@ def handle_popup_key(key, popup, scanner, barcode):
             popup.update(active=False, text="", error="")
     elif key in (13, 10):  # ENTER (13) or numpad ENTER (10)
         # Commit manually typed text, or a scan whose scanner didn't
-        # append its own ENTER terminator
+        # append its own ENTER terminator. Rejected text stays in the
+        # field so the operator can finish typing it.
         text = popup["text"] or scanner.take_buffer()
         if text:
-            barcode = _commit_barcode(popup, text)
+            barcode = _accept_barcode(popup, text, barcode)
         else:
             popup["error"] = "Barcode cannot be empty"
     elif key == 8:  # BACKSPACE
@@ -108,7 +132,7 @@ def handle_popup_key(key, popup, scanner, barcode):
         popup["error"] = ""
         # Auto-commit as soon as the fixed-length barcode is complete
         if len(popup["text"]) >= BARCODE_LENGTH:
-            barcode = _commit_barcode(popup, popup["text"])
+            barcode = _accept_barcode(popup, popup["text"], barcode)
     return barcode
 
 
@@ -116,20 +140,25 @@ def poll_scanner(scanner, popup, barcode):
     """Accept barcode-scanner input, but only while the popup is open, so a
     new barcode is taken only when the system is actually asking for one.
     A scan is committed either when the scanner appends its own ENTER (it
-    arrives on the results queue) or, for scanners without a terminator, as
-    soon as the assembled buffer reaches BARCODE_LENGTH. Returns the
-    (possibly updated) barcode."""
+    arrives on the results queue) or, for scanners without a terminator,
+    once the assembled buffer reaches BARCODE_LENGTH *and* the burst has
+    settled: taking the buffer mid-scan would split one long scan into a
+    barcode now and a stray tail later. Every code is length-checked
+    before it is accepted. Returns the (possibly updated) barcode."""
     if not popup["active"]:
         return barcode
-    # Completed scans (scanner appended ENTER)
+    # Completed scans (scanner appended ENTER). Stop once a commit closes
+    # the popup; anything left over is discarded by the next open_popup
     try:
-        while True:
-            barcode = _commit_barcode(popup, scanner.results.get_nowait())
+        while popup["active"]:
+            barcode = _accept_barcode(popup, scanner.results.get_nowait(),
+                                      barcode)
     except queue.Empty:
         pass
-    # Partial scan with no terminator that has reached the barcode length
-    if popup["active"] and len(scanner.snapshot()) >= BARCODE_LENGTH:
-        barcode = _commit_barcode(popup, scanner.take_buffer())
+    # Partial scan with no terminator: long enough and finished arriving
+    if popup["active"] and len(scanner.snapshot()) >= BARCODE_LENGTH \
+            and scanner.settled():
+        barcode = _accept_barcode(popup, scanner.take_buffer(), barcode)
     return barcode
 
 
@@ -166,14 +195,17 @@ def main():  # pragma: no cover, drives real camera and GUI; logic lives in the 
     live_results = {}      # {slot: (passed, diff_val)} shown in the status bar
     current_barcode = None
 
-    # Show the barcode popup straight away: the operator must set a
-    # barcode before anything else, and this avoids blocking on a
-    # terminal input() call
-    popup = {"active": True, "text": "", "error": ""}
+    popup = {"active": False, "text": "", "error": ""}
 
     # Falls back to manual typing if no scanner is present
     scanner = BarcodeScanner(device_path=SCANNER_DEVICE,
-                             name=SCANNER_NAME, grab=GRAB_SCANNER)
+                             name=SCANNER_NAME, grab=GRAB_SCANNER,
+                             settle=SCANNER_SETTLE_SECONDS)
+
+    # Show the barcode popup straight away: the operator must set a
+    # barcode before anything else, and this avoids blocking on a
+    # terminal input() call
+    open_popup(popup, scanner)
 
     try:
         while True:
@@ -238,8 +270,8 @@ def main():  # pragma: no cover, drives real camera and GUI; logic lives in the 
                     print("No references set. Press 1 or 2 to draw a region first.")
                     continue
                 if current_barcode is None:
-                    popup.update(active=True, text="",
-                                 error="Set a barcode before inspecting")
+                    open_popup(popup, scanner,
+                               error="Set a barcode before inspecting")
                     continue
 
                 still, per_slot, overall_passed = run_inspection(
@@ -263,7 +295,7 @@ def main():  # pragma: no cover, drives real camera and GUI; logic lives in the 
                 if overall_passed:
                     print(f"{current_barcode} passed. Scan the next barcode.")
                     current_barcode = None
-                    popup.update(active=True, text="", error="")
+                    open_popup(popup, scanner)
 
     finally:
         # Always release the camera, scanner, and windows, even on exception
