@@ -32,6 +32,7 @@ DIFF_TRACKBAR = "Diff threshold x10 (0-500)"
 # printed to the terminal into this table. Exact alignment is not
 # critical: the reference is captured from the same box it is compared
 # against, so the box only needs to contain the o-ring with some margin.
+# This can be modified as the system ages to relocate the boxes.
 DEFAULT_ROIS = {
     1: (340, 330, 590, 580),
     2: (690, 330, 940, 580),
