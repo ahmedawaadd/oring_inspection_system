@@ -38,7 +38,7 @@ The test suite runs anywhere, no Pi required: hardware modules (`picamera2`, `ev
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest                # 96 tests, all pass in 0.63s
+python -m pytest                # 104 tests, a second or two
 python -m pytest --cov=.        # with the 95% coverage gate used in CI
 ```
 

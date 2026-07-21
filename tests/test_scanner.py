@@ -66,12 +66,14 @@ def key(code, value=1):
     return FakeEvent(FakeEcodes.EV_KEY, code, value)
 
 
-def run_scanner(events):
+def run_scanner(events, settle=0.1):
     """Build a scanner around a fake device and run _run synchronously.
     Bypasses __init__ so no real evdev or thread is involved."""
     s = scanner.BarcodeScanner.__new__(scanner.BarcodeScanner)
     s.results = queue.Queue()
     s._buffer = ""
+    s._last_key = 0.0
+    s._settle = settle
     s._lock = threading.Lock()
     s._stop = threading.Event()
     s._ecodes = FakeEcodes
@@ -156,6 +158,28 @@ def test_snapshot_does_not_clear():
     assert s.snapshot() == "a"
 
 
+def test_flush_discards_buffer_and_queued_scans():
+    # One completed scan on the queue plus a partial in the buffer; both
+    # must vanish so a reopened popup starts from a clean slate
+    s = run_scanner([key(FakeEcodes.KEY_1), key(FakeEcodes.KEY_ENTER),
+                     key(FakeEcodes.KEY_A)])
+    s.flush()
+    assert s.results.empty()
+    assert s.snapshot() == ""
+
+
+def test_not_settled_right_after_a_character():
+    # A character just arrived, so the burst may still be in progress
+    s = run_scanner([key(FakeEcodes.KEY_A)], settle=10.0)
+    assert not s.settled()
+
+
+def test_settled_once_the_buffer_has_been_quiet():
+    s = run_scanner([key(FakeEcodes.KEY_A)], settle=0.05)
+    s._last_key -= 1.0  # pretend the last character arrived a second ago
+    assert s.settled()
+
+
 # Device lookup by name
 
 def test_find_by_name_selects_the_named_scanner():
@@ -164,14 +188,47 @@ def test_find_by_name_selects_the_named_scanner():
         "/dev/input/event1": FakeDevice("/dev/input/event1", "Honeywell 1950g"),
     }
     found = scanner.BarcodeScanner._find_by_name(
+        devices.__getitem__, devices.keys, ["Honeywell 1950g"])
+    assert found == "/dev/input/event1"
+
+
+def test_find_by_name_accepts_a_single_string():
+    # A bare string is still accepted for backward compatibility.
+    devices = {"/dev/input/event1": FakeDevice("/dev/input/event1", "Honeywell 1950g")}
+    found = scanner.BarcodeScanner._find_by_name(
         devices.__getitem__, devices.keys, "Honeywell 1950g")
+    assert found == "/dev/input/event1"
+
+
+def test_find_by_name_matches_any_known_scanner():
+    # A second known model connects even though it isn't listed first.
+    devices = {
+        "/dev/input/event0": FakeDevice("/dev/input/event0", "AT Keyboard"),
+        "/dev/input/event1": FakeDevice("/dev/input/event1", "Hand Held Products IT4600"),
+    }
+    found = scanner.BarcodeScanner._find_by_name(
+        devices.__getitem__, devices.keys,
+        ["Honeywell 1950g", "Hand Held Products IT4600"])
+    assert found == "/dev/input/event1"
+
+
+def test_find_by_name_prefers_earlier_names():
+    # Both known scanners are present; the one listed first wins regardless
+    # of device enumeration order.
+    devices = {
+        "/dev/input/event0": FakeDevice("/dev/input/event0", "Hand Held Products IT4600"),
+        "/dev/input/event1": FakeDevice("/dev/input/event1", "Honeywell 1950g"),
+    }
+    found = scanner.BarcodeScanner._find_by_name(
+        devices.__getitem__, devices.keys,
+        ["Honeywell 1950g", "Hand Held Products IT4600"])
     assert found == "/dev/input/event1"
 
 
 def test_find_by_name_is_case_insensitive():
     devices = {"/dev/input/event0": FakeDevice("/dev/input/event0", "Honeywell 1950g Keyboard")}
     found = scanner.BarcodeScanner._find_by_name(
-        devices.__getitem__, devices.keys, "honeywell 1950g")
+        devices.__getitem__, devices.keys, ["honeywell 1950g"])
     assert found == "/dev/input/event0"
 
 
@@ -182,13 +239,14 @@ def test_find_by_name_ignores_keyboard_and_mouse():
         "/dev/input/event1": FakeDevice("/dev/input/event1", "Logitech USB Mouse"),
     }
     found = scanner.BarcodeScanner._find_by_name(
-        devices.__getitem__, devices.keys, "Honeywell 1950g")
+        devices.__getitem__, devices.keys,
+        ["Honeywell 1950g", "Hand Held Products IT4600"])
     assert found is None
 
 
 def test_find_by_name_returns_none_when_absent():
     found = scanner.BarcodeScanner._find_by_name(
-        lambda: [], lambda: [], "Honeywell 1950g")
+        lambda: [], lambda: [], ["Honeywell 1950g"])
     assert found is None
 
 
@@ -196,7 +254,7 @@ def test_find_by_name_skips_unopenable_devices():
     def raise_oserror(path):
         raise OSError("permission denied")
     found = scanner.BarcodeScanner._find_by_name(
-        raise_oserror, lambda: ["/dev/input/event0"], "Honeywell 1950g")
+        raise_oserror, lambda: ["/dev/input/event0"], ["Honeywell 1950g"])
     assert found is None
 
 
@@ -209,6 +267,9 @@ def test_missing_evdev_degrades_gracefully(monkeypatch):
     s = scanner.BarcodeScanner()
     assert s.device is None
     assert s.snapshot() == ""
+    # The main loop still calls these on a disabled scanner every frame
+    assert s.settled()
+    s.flush()
     s.close()  # must not raise
 
 
@@ -222,7 +283,7 @@ def test_full_construction_with_fake_evdev(monkeypatch):
     fake_evdev.list_devices = lambda: [device.path]
     monkeypatch.setitem(sys.modules, "evdev", fake_evdev)
 
-    s = scanner.BarcodeScanner(name="Honeywell 1950g", grab=True)
+    s = scanner.BarcodeScanner(names=["Honeywell 1950g"], grab=True)
     assert s.name == "Honeywell 1950g"
     assert device.grabbed
     assert s.results.get(timeout=2) == "a"
