@@ -36,7 +36,7 @@ class BarcodeScanner:
     found this does nothing and manual keyboard entry still works.
     """
 
-    def __init__(self, device_path=None, name="Honeywell 1950g", grab=True,
+    def __init__(self, device_path=None, names=("Honeywell 1950g",), grab=True,
                  settle=0.1):
         self.results = queue.Queue()
         self._buffer = ""
@@ -56,10 +56,15 @@ class BarcodeScanner:
         self._ecodes = ecodes
         self._keymap = _build_keymap(ecodes)
 
+        # A single name is accepted too, so old callers keep working.
+        if isinstance(names, str):
+            names = [names]
+
         if device_path is None:
-            device_path = self._find_by_name(InputDevice, list_devices, name)
+            device_path = self._find_by_name(InputDevice, list_devices, names)
         if device_path is None:
-            print(f"Barcode scanner '{name}' not found. Type the barcode manually.")
+            wanted = ", ".join(names)
+            print(f"No known barcode scanner ({wanted}) found. Type the barcode manually.")
             return
 
         try:
@@ -77,22 +82,28 @@ class BarcodeScanner:
         threading.Thread(target=self._run, daemon=True).start()
 
     @staticmethod
-    def _find_by_name(InputDevice, list_devices, name):
-        """Return the path of the input device whose name matches `name`.
+    def _find_by_name(InputDevice, list_devices, names):
+        """Return the path of the first input device matching one of `names`.
 
         The scanner enumerates as a keyboard, so it is indistinguishable
         from the operator's real keyboard or mouse by capabilities alone.
-        We connect to it by name only ("Honeywell 1950g"), matched
-        case-insensitively, so a keyboard or mouse is never grabbed. If no
-        matching device is present we return None and the app falls back to
-        manual entry."""
-        for path in list_devices():
-            try:
-                dev = InputDevice(path)
-            except OSError:
-                continue
-            if name.lower() in dev.name.lower():
-                return dev.path
+        We connect to it by name only (e.g. "Honeywell 1950g"), matched
+        case-insensitively as a substring, so a keyboard or mouse is never
+        grabbed. `names` is a list of known scanners in priority order: the
+        earlier a name appears, the more it is preferred, so if two known
+        scanners are plugged in the first listed one wins regardless of
+        device enumeration order. If no known scanner is present we return
+        None and the app falls back to manual entry."""
+        if isinstance(names, str):
+            names = [names]
+        for name in names:
+            for path in list_devices():
+                try:
+                    dev = InputDevice(path)
+                except OSError:
+                    continue
+                if name.lower() in dev.name.lower():
+                    return dev.path
         return None
 
     def _run(self):

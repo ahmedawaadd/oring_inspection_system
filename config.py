@@ -35,7 +35,13 @@ THUMB_W, THUMB_H = 110, 75
 
 # Barcode scanner, read directly from its input device via evdev
 SCANNER_DEVICE = None             # explicit /dev/input/eventX path, or None to look up by name
-SCANNER_NAME = "Honeywell 1950g"  # connect only to the device with this name (case-insensitive)
+# Known barcode scanners, matched by device name (case-insensitive substring).
+# Searched in order at startup; the first one connected is used. Add new
+# models here so operators don't have to select their scanner manually.
+SCANNER_NAMES = [
+    "Honeywell 1950g",
+    "Hand Held Products IT4600",
+]
 GRAB_SCANNER = True               # take exclusive access so scans don't leak to other windows
 
 # Barcodes are a fixed length; the entry popup auto-commits as soon as this

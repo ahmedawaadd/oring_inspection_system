@@ -23,7 +23,7 @@ from camera import capture_still, create_camera
 from config import (BARCODE_LENGTH, DEFAULT_DIFF_THRESHOLD,
                     DEFAULT_NOISE_THRESHOLD, DIFF_TRACKBAR, GRAB_SCANNER,
                     NOISE_TRACKBAR, PREVIEW_RESOLUTION, SCANNER_DEVICE,
-                    SCANNER_NAME, SCANNER_SETTLE_SECONDS, WINDOW_NAME)
+                    SCANNER_NAMES, SCANNER_SETTLE_SECONDS, WINDOW_NAME)
 from scanner import BarcodeScanner
 from vision import compare, crop, make_thumb, normalise_rect, preprocess
 
@@ -199,7 +199,7 @@ def main():  # pragma: no cover, drives real camera and GUI; logic lives in the 
 
     # Falls back to manual typing if no scanner is present
     scanner = BarcodeScanner(device_path=SCANNER_DEVICE,
-                             name=SCANNER_NAME, grab=GRAB_SCANNER,
+                             names=SCANNER_NAMES, grab=GRAB_SCANNER,
                              settle=SCANNER_SETTLE_SECONDS)
 
     # Show the barcode popup straight away: the operator must set a
