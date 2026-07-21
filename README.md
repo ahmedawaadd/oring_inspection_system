@@ -46,7 +46,7 @@ Test layout mirrors the source: `tests/test_vision.py` covers the comparison mat
 
 ## How to use
 
-1. Press **`1`** or **`2`**, then click and drag on the live preview to draw a box around an O-ring. Let go, and the camera takes a high-resolution photo and saves it as the reference for that slot.
+1. Press **`1`** or **`2`** and a box appears already drawn in place — the last calibrated position, or the nominal position from `DEFAULT_ROIS` in `config.py` on a fresh install (the camera is fixed to the part fixture, so the O-rings always sit in the same spot). Press **`ENTER`** to accept it and the camera takes a high-resolution photo and saves it as the reference for that slot. To recalibrate, click and drag a new box instead — it is saved and becomes the pre-drawn box from then on. **`ESC`** backs out without changing anything.
 2. On startup the tool asks for a barcode. Scan (or type) the part's barcode; it submits automatically once the full code is entered — no ENTER needed.
 3. Place the part under the camera and press **`SPACE`** to inspect. The tool compares the current view to the reference and shows **PASS** or **FAIL**.
 4. On a **FAIL**, the barcode stays put — re-inspect the same part until it passes. On a **PASS**, the tool prompts for the next barcode, so parts advance one at a time like a production line.

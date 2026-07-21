@@ -321,6 +321,62 @@ def test_tiny_drag_rejected_but_state_reset(workdir):
     assert ui.mouse["active_slot"] is None
 
 
+# Pre-drawn ROI boxes (press 1/2, ENTER to accept, drag to adjust)
+
+def test_arm_slot_preloads_saved_roi():
+    # A previously calibrated ROI takes precedence over the config default
+    main.arm_roi_slot(1, {1: (50, 60, 250, 260)})
+    assert ui.mouse["active_slot"] == 1
+    assert ui.mouse["pt1"] == (50, 60)
+    assert ui.mouse["pt2"] == (250, 260)
+    assert not ui.mouse["drawing"]
+    assert not ui.mouse["roi_ready"]
+
+
+def test_arm_slot_falls_back_to_config_default():
+    main.arm_roi_slot(2, {})
+    x1, y1, x2, y2 = config.DEFAULT_ROIS[2]
+    assert ui.mouse["pt1"] == (x1, y1)
+    assert ui.mouse["pt2"] == (x2, y2)
+
+
+def test_accept_predrawn_roi_captures_reference(workdir, rng):
+    # Press 1, then ENTER: the reference is captured from the pre-drawn
+    # box without any mouse input
+    still = rng.integers(0, 255, (960, 1280, 3), dtype=np.uint8)
+    saved = {1: (100, 100, 300, 300)}
+    rois, refs, thumbs = dict(saved), {}, {}
+
+    main.arm_roi_slot(1, rois)
+    main.accept_predrawn_roi()
+    assert ui.mouse["roi_ready"]
+
+    main.handle_completed_roi(FakeCamera([still]), rois, refs, thumbs, {}, {})
+    assert rois[1] == saved[1]
+    assert refs[1].shape == (200, 200)
+    assert os.path.exists(config.REFERENCE_PATHS[0])
+
+
+def test_accept_ignored_while_not_armed():
+    main.accept_predrawn_roi()
+    assert not ui.mouse["roi_ready"]
+
+
+def test_accept_ignored_mid_drag():
+    # ENTER during an active drag must not commit a half-drawn box
+    main.arm_roi_slot(1, {})
+    ui.mouse["drawing"] = True
+    main.accept_predrawn_roi()
+    assert not ui.mouse["roi_ready"]
+
+
+def test_cancel_disarms_without_capture():
+    main.arm_roi_slot(1, {})
+    main.cancel_roi_slot()
+    assert ui.mouse["active_slot"] is None
+    assert not ui.mouse["roi_ready"]
+
+
 # Inspection
 
 def test_run_inspection_pass_and_fail(workdir, rng):

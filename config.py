@@ -23,6 +23,20 @@ DEFAULT_DIFF_THRESHOLD = 50
 NOISE_TRACKBAR = "Noise filter  (0-100)"
 DIFF_TRACKBAR = "Diff threshold x10 (0-500)"
 
+# Pre-drawn ROI boxes as (x1, y1, x2, y2) in frame pixels. The camera is
+# bolted to the part fixture, so the o-rings land in the same place every
+# time and these nominal positions are usually correct as-is. Pressing
+# 1 or 2 shows this box (or the last saved ROI, which takes precedence)
+# already drawn; ENTER accepts it, dragging adjusts it. To calibrate:
+# drag the box once where you want it, then copy the "ROI=..." values
+# printed to the terminal into this table. Exact alignment is not
+# critical: the reference is captured from the same box it is compared
+# against, so the box only needs to contain the o-ring with some margin.
+DEFAULT_ROIS = {
+    1: (340, 330, 590, 580),
+    2: (690, 330, 940, 580),
+}
+
 # On-disk persistence, indexed by slot (slot 1 uses index 0)
 REFERENCE_PATHS = ["reference_1.jpg", "reference_2.jpg"]
 ROI_PATHS = ["roi_1.npy", "roi_2.npy"]

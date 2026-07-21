@@ -83,11 +83,12 @@ def draw_overlay(frame, rois, refs, live_results, thumbs, barcode,
 
     # Drawing hint while defining an ROI, otherwise the keyboard controls
     if mouse["active_slot"] is not None:
-        hint = f"Drawing Ref {mouse['active_slot']}   click and drag, release to confirm"
+        hint = (f"Ref {mouse['active_slot']}   ENTER: accept box     "
+                "click and drag: adjust     ESC: cancel")
         cv2.putText(frame, hint, (16, bar_y + 24),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.53, YELLOW, 1, cv2.LINE_AA)
     else:
-        ctrl = "1 / 2: Draw reference     SPACE: Inspect     Q: Quit"
+        ctrl = "1 / 2: Set reference     SPACE: Inspect     Q: Quit"
         cv2.putText(frame, ctrl, (16, bar_y + 24),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.50, GRAY, 1, cv2.LINE_AA)
 

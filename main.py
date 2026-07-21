@@ -21,9 +21,10 @@ import storage
 import ui
 from camera import capture_still, create_camera
 from config import (BARCODE_LENGTH, DEFAULT_DIFF_THRESHOLD,
-                    DEFAULT_NOISE_THRESHOLD, DIFF_TRACKBAR, GRAB_SCANNER,
-                    NOISE_TRACKBAR, PREVIEW_RESOLUTION, SCANNER_DEVICE,
-                    SCANNER_NAMES, SCANNER_SETTLE_SECONDS, WINDOW_NAME)
+                    DEFAULT_NOISE_THRESHOLD, DEFAULT_ROIS, DIFF_TRACKBAR,
+                    GRAB_SCANNER, NOISE_TRACKBAR, PREVIEW_RESOLUTION,
+                    SCANNER_DEVICE, SCANNER_NAMES, SCANNER_SETTLE_SECONDS,
+                    WINDOW_NAME)
 from scanner import BarcodeScanner
 from vision import compare, crop, make_thumb, normalise_rect, preprocess
 
@@ -42,6 +43,31 @@ def setup_window():  # pragma: no cover, requires a display and OpenCV highgui
                        DEFAULT_NOISE_THRESHOLD, 100, lambda _: None)
     cv2.createTrackbar(DIFF_TRACKBAR, WINDOW_NAME,
                        DEFAULT_DIFF_THRESHOLD, 500, lambda _: None)
+
+
+def arm_roi_slot(slot, rois):
+    """Arm ROI (re)calibration for a slot with its box already drawn.
+    The camera and part fixture are bolted together, so the o-rings sit
+    in the same frame position every run: the last saved ROI (or the
+    nominal position from config if none has been saved yet) is loaded
+    into the rubber-band state so the operator sees the box in place
+    immediately. ENTER then accepts it as-is; dragging replaces it."""
+    x1, y1, x2, y2 = rois.get(slot, DEFAULT_ROIS[slot])
+    ui.mouse.update(active_slot=slot, drawing=False, roi_ready=False,
+                    pt1=(x1, y1), pt2=(x2, y2))
+
+
+def accept_predrawn_roi():
+    """Accept the currently shown box without dragging: flag it ready so
+    the main loop captures the reference from it, exactly as if the
+    operator had drawn it by hand."""
+    if ui.mouse["active_slot"] is not None and not ui.mouse["drawing"]:
+        ui.mouse["roi_ready"] = True
+
+
+def cancel_roi_slot():
+    """Disarm ROI calibration without capturing anything."""
+    ui.mouse.update(active_slot=None, drawing=False, roi_ready=False)
 
 
 def handle_completed_roi(cam, rois, refs, thumbs, sample_crops, live_results):
@@ -256,10 +282,18 @@ def main():  # pragma: no cover, drives real camera and GUI; logic lives in the 
                 break
 
             elif key in (ord('1'), ord('2')):
-                # Arm ROI drawing for the chosen slot
-                ui.mouse["active_slot"] = int(chr(key))
-                ui.mouse["drawing"] = False
-                ui.mouse["roi_ready"] = False
+                # Show the pre-drawn box for the chosen slot; ENTER
+                # accepts it, dragging adjusts it
+                arm_roi_slot(int(chr(key)), rois)
+
+            elif key in (13, 10) and ui.mouse["active_slot"] is not None:
+                # ENTER: accept the pre-drawn box; the capture happens at
+                # the top of the next loop iteration via roi_ready
+                accept_predrawn_roi()
+
+            elif key == 27 and ui.mouse["active_slot"] is not None:
+                # ESC: back out of calibration, keep the existing reference
+                cancel_roi_slot()
 
             elif key == ord(' '):
                 # Only inspect slots with both a region and a reference
