@@ -100,6 +100,25 @@ def test_engineer_mode_overlay_differs_from_operator(frame):
     assert not np.array_equal(operator, engineer)
 
 
+def test_threshold_values_are_hidden_from_operator(frame, monkeypatch):
+    rendered = []
+    original = cv2.putText
+
+    def capture_text(image, text, *args, **kwargs):
+        rendered.append(text)
+        return original(image, text, *args, **kwargs)
+
+    monkeypatch.setattr(cv2, "putText", capture_text)
+    _overlay(frame.copy(), engineer_mode=False,
+             noise_thresh=37, diff_thresh=6.4)
+    assert not any(text.startswith("Noise ") for text in rendered)
+
+    rendered.clear()
+    _overlay(frame.copy(), engineer_mode=True,
+             noise_thresh=37, diff_thresh=6.4)
+    assert "Noise 37   Threshold 6.4" in rendered
+
+
 def test_draw_overlay_shows_rubber_band_while_drawing(frame):
     ui.mouse.update(active_slot=1, drawing=True, pt1=(100, 100), pt2=(300, 300))
     with_band = _overlay(frame.copy())

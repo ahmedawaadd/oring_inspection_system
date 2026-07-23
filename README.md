@@ -54,13 +54,12 @@ logs the current view. A PASS advances to the next barcode. A FAIL requires
 the same barcode before another attempt, so an unresolved part cannot be
 silently replaced.
 
-Operator mode cannot change references or inspection sensitivity. The sliders
-remain visible, but attempted changes are ignored and restored to the saved
-calibration.
+Operator mode cannot see or change references or inspection sensitivity.
+Calibration values and sliders exist only in Production Engineer mode.
 
 ### Production Engineer mode
 
-1. Press **`TAB`** to open the Production Engineer login.
+1. Press **`/`** to open the Production Engineer login.
 2. Enter the username, press **`ENTER`**, enter the password, then press
    **`ENTER`** again. TAB switches fields and ESC cancels.
 3. Press **`1`** or **`2`**, then drag a region on the preview to replace that

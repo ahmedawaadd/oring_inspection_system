@@ -21,30 +21,47 @@ import cv2
 import storage
 import ui
 from camera import capture_still, create_camera
-from config import (BARCODE_LENGTH, DIFF_TRACKBAR, ENGINEER_LOGIN_KEY,
+from config import (BARCODE_LENGTH, CALIBRATION_WINDOW_NAME, DIFF_TRACKBAR,
+                    ENGINEER_LOGIN_KEY, ENGINEER_LOGIN_KEY_LABEL,
                     ENGINEER_LOGOUT_KEY, ENGINEER_PASSWORD,
                     ENGINEER_SCAN_KEY, ENGINEER_USERNAME, GRAB_SCANNER,
-                    LOGIN_FIELD_MAX_LENGTH, NOISE_TRACKBAR,
+                    LOGIN_FIELD_MAX_LENGTH,
+                    LOGIN_FIELD_SWITCH_KEY, NOISE_TRACKBAR,
                     PREVIEW_RESOLUTION, SCANNER_DEVICE, SCANNER_NAMES,
                     SCANNER_SETTLE_SECONDS, WINDOW_NAME)
 from scanner import BarcodeScanner
 from vision import compare, crop, make_thumb, normalise_rect, preprocess
 
 
-def setup_window(noise_thresh, diff_thresh):  # pragma: no cover, requires a display and OpenCV highgui
-    """Create the display window with mouse callback and tuning sliders.
-    Their saved positions are visible to everyone, but only authenticated
-    Engineer mode is allowed to adopt changes."""
+def setup_window():  # pragma: no cover, requires a display and OpenCV highgui
+    """Create the inspection window without calibration controls. Operator
+    mode must not reveal either threshold or a control that appears usable."""
     # WINDOW_GUI_NORMAL disables Qt's expanded GUI (status bar, toolbar,
     # pixel picker). The pixel picker repaints on every mouse-move over
     # the image, which tanks the framerate on the Pi while hovering
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
     cv2.resizeWindow(WINDOW_NAME, *PREVIEW_RESOLUTION)
     cv2.setMouseCallback(WINDOW_NAME, ui.on_mouse)
-    cv2.createTrackbar(NOISE_TRACKBAR, WINDOW_NAME,
-                       noise_thresh, 100, lambda _: None)
-    cv2.createTrackbar(DIFF_TRACKBAR, WINDOW_NAME,
-                       int(round(diff_thresh * 10)), 500, lambda _: None)
+
+
+def open_calibration_window(noise_thresh, diff_thresh):  # pragma: no cover, requires a display and OpenCV highgui
+    """Create sliders in a separate Engineer-only window. OpenCV cannot
+    hide trackbars attached to the inspection window, so separation is the
+    only reliable way to make them absent from Operator mode."""
+    cv2.namedWindow(
+        CALIBRATION_WINDOW_NAME, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
+    cv2.resizeWindow(CALIBRATION_WINDOW_NAME, 560, 140)
+    cv2.createTrackbar(
+        NOISE_TRACKBAR, CALIBRATION_WINDOW_NAME,
+        noise_thresh, 100, lambda _: None)
+    cv2.createTrackbar(
+        DIFF_TRACKBAR, CALIBRATION_WINDOW_NAME,
+        int(round(diff_thresh * 10)), 500, lambda _: None)
+
+
+def close_calibration_window():  # pragma: no cover, requires a display and OpenCV highgui
+    """Remove all sensitivity controls immediately on Engineer logout."""
+    cv2.destroyWindow(CALIBRATION_WINDOW_NAME)
 
 
 def handle_completed_roi(cam, rois, refs, thumbs, sample_crops, live_results):
@@ -122,13 +139,18 @@ def open_engineer_login(login, scanner):
                  password="", error="")
 
 
+def is_engineer_login_key(key):
+    """Recognize the configured shortcut before barcode key handling."""
+    return key == ENGINEER_LOGIN_KEY
+
+
 def handle_engineer_login_key(key, login):
     """Handle one credential-dialog key. Returns True only when the
     configured engineer credentials were accepted."""
     field = login["field"]
     if key == 27:  # ESC cancels without changing the current mode
         login.update(active=False, username="", password="", error="")
-    elif key == ENGINEER_LOGIN_KEY:  # TAB moves between the two fields
+    elif key == LOGIN_FIELD_SWITCH_KEY:  # TAB moves between the two fields
         login["field"] = "password" if field == "username" else "username"
         login["error"] = ""
     elif key in (13, 10):  # ENTER advances or submits
@@ -184,20 +206,15 @@ def handle_pending_roi(engineer_mode, cam, rois, refs, thumbs,
 
 
 def sync_thresholds(engineer_mode, noise_thresh, diff_thresh):
-    """Read and persist sliders only for an authenticated engineer.
-    Operator mode restores the saved positions before inspection, because
-    OpenCV trackbars cannot be disabled and must never become an authority."""
+    """Read and persist sliders only for an authenticated engineer. The
+    calibration window does not exist at all while an Operator is active."""
     if not engineer_mode:
-        diff_position = int(round(diff_thresh * 10))
-        if cv2.getTrackbarPos(NOISE_TRACKBAR, WINDOW_NAME) != noise_thresh:
-            cv2.setTrackbarPos(NOISE_TRACKBAR, WINDOW_NAME, noise_thresh)
-        if cv2.getTrackbarPos(DIFF_TRACKBAR, WINDOW_NAME) != diff_position:
-            cv2.setTrackbarPos(
-                DIFF_TRACKBAR, WINDOW_NAME, diff_position)
         return noise_thresh, diff_thresh
 
-    new_noise = cv2.getTrackbarPos(NOISE_TRACKBAR, WINDOW_NAME)
-    new_diff = cv2.getTrackbarPos(DIFF_TRACKBAR, WINDOW_NAME) / 10.0
+    new_noise = cv2.getTrackbarPos(
+        NOISE_TRACKBAR, CALIBRATION_WINDOW_NAME)
+    new_diff = cv2.getTrackbarPos(
+        DIFF_TRACKBAR, CALIBRATION_WINDOW_NAME) / 10.0
     if (new_noise, new_diff) != (noise_thresh, diff_thresh):
         storage.save_thresholds(new_noise, new_diff)
     return new_noise, new_diff
@@ -290,7 +307,7 @@ def run_inspection(cam, active_refs, rois, sample_crops, live_results,
 def main():  # pragma: no cover, drives real camera and GUI; logic lives in the tested helpers
     cam = create_camera()
     noise_thresh, diff_thresh = storage.load_thresholds()
-    setup_window(noise_thresh, diff_thresh)
+    setup_window()
 
     # Load anything saved by a previous session
     rois, refs, thumbs = storage.load_references()
@@ -314,13 +331,15 @@ def main():  # pragma: no cover, drives real camera and GUI; logic lives in the 
     # been completed, direct the user to an engineer instead of accepting
     # a barcode that cannot be inspected.
     active_refs = {s: r for s, r in refs.items() if s in rois}
-    startup_error = "" if active_refs else "Engineer setup required - press TAB"
+    startup_error = (
+        "" if active_refs else
+        f"Engineer setup required - press {ENGINEER_LOGIN_KEY_LABEL}")
     open_popup(popup, scanner, error=startup_error)
 
     try:
         while True:
-            # Trackbars remain visible in OpenCV, but only Engineer mode is
-            # allowed to turn their positions into inspection settings.
+            # The calibration window exists only in Engineer mode; Operator
+            # mode keeps using the last authenticated settings unchanged.
             noise_thresh, diff_thresh = sync_thresholds(
                 engineer_mode, noise_thresh, diff_thresh)
 
@@ -414,14 +433,15 @@ def main():  # pragma: no cover, drives real camera and GUI; logic lives in the 
                 if authenticated:
                     engineer_mode = True
                     disarm_roi()
+                    open_calibration_window(noise_thresh, diff_thresh)
                     popup.update(active=False, text="", error="",
                                  inspection_requested=False)
                     print("Production Engineer mode enabled")
                 continue
 
-            # TAB is checked before barcode typing because the barcode popup
-            # is normally active throughout Operator mode.
-            if not engineer_mode and key == ENGINEER_LOGIN_KEY:
+            # Slash is checked before barcode typing because the barcode
+            # popup is normally active throughout Operator mode.
+            if not engineer_mode and is_engineer_login_key(key):
                 open_engineer_login(login, scanner)
                 continue
 
@@ -430,11 +450,13 @@ def main():  # pragma: no cover, drives real camera and GUI; logic lives in the 
                     ord(ENGINEER_LOGOUT_KEY.upper())):
                 engineer_mode = False
                 disarm_roi()
+                close_calibration_window()
                 retry_error = (
                     f"Re-scan {current_barcode} to re-inspect"
                     if current_barcode is not None else
                     ("" if active_refs else
-                     "Engineer setup required - press TAB")
+                     "Engineer setup required - press "
+                     f"{ENGINEER_LOGIN_KEY_LABEL}")
                 )
                 open_popup(popup, scanner, error=retry_error)
                 print("Operator mode enabled")
@@ -462,7 +484,9 @@ def main():  # pragma: no cover, drives real camera and GUI; logic lives in the 
                     current_barcode = handle_popup_key(
                         key, popup, scanner, current_barcode)
                 else:
-                    popup["error"] = "Engineer setup required - press TAB"
+                    popup["error"] = (
+                        "Engineer setup required - press "
+                        f"{ENGINEER_LOGIN_KEY_LABEL}")
                 continue  # don't fall through to normal key handling
 
             if key == ord('q'):

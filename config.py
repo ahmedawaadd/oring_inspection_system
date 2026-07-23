@@ -33,6 +33,7 @@ LOGS_DIR = "inspections"
 CALIBRATION_PATH = "calibration.json"
 
 WINDOW_NAME = "O-ring Inspection"
+CALIBRATION_WINDOW_NAME = "Engineer Calibration"
 
 # Reference thumbnail size shown in the bottom status bar
 THUMB_W, THUMB_H = 110, 75
@@ -59,10 +60,12 @@ BARCODE_LENGTH = 7
 # behind as a phantom barcode for the next part.
 SCANNER_SETTLE_SECONDS = 0.1
 
-# Access control. TAB cannot occur in a valid barcode, so it opens the
-# engineer login without stealing a character from manual barcode entry.
-ENGINEER_LOGIN_KEY = 9
-ENGINEER_LOGIN_KEY_LABEL = "TAB"
+# Access control. Slash is excluded from barcode entry and is reported
+# consistently by OpenCV, unlike TAB and modifier-key combinations that
+# some HighGUI backends consume before the application sees them.
+ENGINEER_LOGIN_KEY = ord("/")
+ENGINEER_LOGIN_KEY_LABEL = "/"
+LOGIN_FIELD_SWITCH_KEY = 9
 ENGINEER_LOGOUT_KEY = "l"
 ENGINEER_LOGOUT_KEY_LABEL = "L"
 ENGINEER_SCAN_KEY = "s"

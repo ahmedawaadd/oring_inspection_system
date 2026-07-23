@@ -79,11 +79,14 @@ def draw_overlay(frame, rois, refs, live_results, thumbs, barcode,
     cv2.putText(frame, mode_text, ((w - mw) // 2, 32),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.52, mode_color, 1, cv2.LINE_AA)
 
-    # Measure the threshold text width first so it can be right-aligned
-    thr_text = f"Noise {noise_thresh}   Threshold {diff_thresh:.1f}"
-    (tw, _), _ = cv2.getTextSize(thr_text, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 1)
-    cv2.putText(frame, thr_text, (w - tw - 16, 32),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.52, GRAY, 1, cv2.LINE_AA)
+    # Sensitivity is calibration data, not operator information. Show it
+    # only alongside the Engineer controls that are allowed to change it.
+    if engineer_mode:
+        thr_text = f"Noise {noise_thresh}   Threshold {diff_thresh:.1f}"
+        (tw, _), _ = cv2.getTextSize(
+            thr_text, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 1)
+        cv2.putText(frame, thr_text, (w - tw - 16, 32),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.52, GRAY, 1, cv2.LINE_AA)
 
     # Bottom bar (130 px): controls hint plus one panel per slot
     bar_y = h - 130

@@ -311,6 +311,11 @@ def test_open_engineer_login_flushes_scanner_and_resets_fields():
     assert scanner.results.empty()
 
 
+def test_engineer_login_shortcut_is_separate_from_tab_navigation():
+    assert main.is_engineer_login_key(ord('/'))
+    assert not main.is_engineer_login_key(config.LOGIN_FIELD_SWITCH_KEY)
+
+
 def test_engineer_login_accepts_configured_credentials(login, monkeypatch):
     monkeypatch.setattr(main, "ENGINEER_USERNAME", "prod")
     monkeypatch.setattr(main, "ENGINEER_PASSWORD", "safe-pass")
@@ -344,7 +349,7 @@ def test_engineer_login_tab_backspace_and_escape(login):
     main.handle_engineer_login_key(BACKSPACE, login)
     assert login["username"] == ""
 
-    main.handle_engineer_login_key(config.ENGINEER_LOGIN_KEY, login)
+    main.handle_engineer_login_key(config.LOGIN_FIELD_SWITCH_KEY, login)
     assert login["field"] == "password"
     main.handle_engineer_login_key(ESC, login)
     assert not login["active"]
@@ -402,40 +407,17 @@ def test_engineer_can_complete_pending_reference(workdir, rng):
     assert rois[1] == (100, 100, 300, 300)
 
 
-def test_operator_threshold_sync_ignores_trackbar_values(monkeypatch):
-    positions = []
-    attempted = {
-        config.NOISE_TRACKBAR: 99,
-        config.DIFF_TRACKBAR: 499,
-    }
-    monkeypatch.setattr(
-        cv2, "setTrackbarPos",
-        lambda name, window, value: positions.append((name, window, value)))
+def test_operator_threshold_sync_has_no_calibration_controls(monkeypatch):
     monkeypatch.setattr(
         cv2, "getTrackbarPos",
-        lambda name, window: attempted[name])
+        lambda *args: pytest.fail("Operator mode must not read hidden sliders"))
+    monkeypatch.setattr(
+        cv2, "setTrackbarPos",
+        lambda *args: pytest.fail("Operator mode must not expose sliders"))
 
     thresholds = main.sync_thresholds(False, 31, 4.2)
 
     assert thresholds == (31, 4.2)
-    assert positions == [
-        (config.NOISE_TRACKBAR, config.WINDOW_NAME, 31),
-        (config.DIFF_TRACKBAR, config.WINDOW_NAME, 42),
-    ]
-
-
-def test_operator_threshold_sync_does_not_rewrite_matching_positions(monkeypatch):
-    positions = {
-        config.NOISE_TRACKBAR: 31,
-        config.DIFF_TRACKBAR: 42,
-    }
-    monkeypatch.setattr(
-        cv2, "getTrackbarPos", lambda name, window: positions[name])
-    monkeypatch.setattr(
-        cv2, "setTrackbarPos",
-        lambda *args: pytest.fail("Matching trackbars should be left alone"))
-
-    assert main.sync_thresholds(False, 31, 4.2) == (31, 4.2)
 
 
 def test_engineer_threshold_sync_persists_changes(monkeypatch):
@@ -444,8 +426,13 @@ def test_engineer_threshold_sync_persists_changes(monkeypatch):
         config.DIFF_TRACKBAR: 64,
     }
     saved = []
-    monkeypatch.setattr(
-        cv2, "getTrackbarPos", lambda name, window: positions[name])
+    windows = []
+
+    def get_position(name, window):
+        windows.append(window)
+        return positions[name]
+
+    monkeypatch.setattr(cv2, "getTrackbarPos", get_position)
     monkeypatch.setattr(
         storage, "save_thresholds",
         lambda noise, diff: saved.append((noise, diff)))
@@ -454,6 +441,7 @@ def test_engineer_threshold_sync_persists_changes(monkeypatch):
 
     assert thresholds == (37, 6.4)
     assert saved == [(37, 6.4)]
+    assert windows == [config.CALIBRATION_WINDOW_NAME] * 2
 
 
 def test_unchanged_engineer_thresholds_are_not_rewritten(monkeypatch):
