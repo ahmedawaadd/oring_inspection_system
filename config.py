@@ -7,6 +7,9 @@ Every tunable value lives here so behaviour can be adjusted without
 touching application logic.
 """
 
+import os
+
+
 # Camera preview size, also used for the display window
 PREVIEW_RESOLUTION = (1280, 960)
 
@@ -27,6 +30,7 @@ DIFF_TRACKBAR = "Diff threshold x10 (0-500)"
 REFERENCE_PATHS = ["reference_1.jpg", "reference_2.jpg"]
 ROI_PATHS = ["roi_1.npy", "roi_2.npy"]
 LOGS_DIR = "inspections"
+CALIBRATION_PATH = "calibration.json"
 
 WINDOW_NAME = "O-ring Inspection"
 
@@ -54,6 +58,22 @@ BARCODE_LENGTH = 7
 # first BARCODE_LENGTH characters of a longer code and leave its tail
 # behind as a phantom barcode for the next part.
 SCANNER_SETTLE_SECONDS = 0.1
+
+# Access control. TAB cannot occur in a valid barcode, so it opens the
+# engineer login without stealing a character from manual barcode entry.
+ENGINEER_LOGIN_KEY = 9
+ENGINEER_LOGIN_KEY_LABEL = "TAB"
+ENGINEER_LOGOUT_KEY = "l"
+ENGINEER_LOGOUT_KEY_LABEL = "L"
+ENGINEER_SCAN_KEY = "s"
+ENGINEER_SCAN_KEY_LABEL = "S"
+LOGIN_FIELD_MAX_LENGTH = 64
+
+# Environment variables keep deployment credentials out of the source
+# while these fallbacks make a fresh development checkout usable. Set both
+# variables on the production station before it is placed into service.
+ENGINEER_USERNAME = os.environ.get("ORING_ENGINEER_USERNAME", "engineer")
+ENGINEER_PASSWORD = os.environ.get("ORING_ENGINEER_PASSWORD", "change-me")
 
 # Colours in BGR order because OpenCV uses BGR, not RGB
 GREEN = (60, 200, 60)

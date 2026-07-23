@@ -94,6 +94,12 @@ def test_draw_overlay_full_state(frame):
     assert out.shape == frame.shape
 
 
+def test_engineer_mode_overlay_differs_from_operator(frame):
+    operator = _overlay(frame.copy(), engineer_mode=False)
+    engineer = _overlay(frame.copy(), engineer_mode=True)
+    assert not np.array_equal(operator, engineer)
+
+
 def test_draw_overlay_shows_rubber_band_while_drawing(frame):
     ui.mouse.update(active_slot=1, drawing=True, pt1=(100, 100), pt2=(300, 300))
     with_band = _overlay(frame.copy())
@@ -115,6 +121,33 @@ def test_popup_with_error_differs_from_without(frame):
     clean = ui.draw_barcode_popup(frame.copy(), "AB12", "")
     with_error = ui.draw_barcode_popup(frame.copy(), "AB12", "Barcode cannot be empty")
     assert not np.array_equal(clean, with_error)
+
+
+# Production Engineer login
+
+def test_engineer_login_dims_background(frame):
+    frame[:] = 200
+    login = {"field": "username", "username": "", "password": "",
+             "error": ""}
+    out = ui.draw_engineer_login(frame.copy(), login)
+    assert out[0, 0].mean() < 200
+
+
+def test_engineer_login_masks_password(frame, monkeypatch):
+    rendered = []
+    original = cv2.putText
+
+    def capture_text(image, text, *args, **kwargs):
+        rendered.append(text)
+        return original(image, text, *args, **kwargs)
+
+    monkeypatch.setattr(cv2, "putText", capture_text)
+    login = {"field": "password", "username": "prod",
+             "password": "secret", "error": "Invalid username or password"}
+    ui.draw_engineer_login(frame.copy(), login)
+
+    assert "secret" not in rendered
+    assert "*" * len("secret") + "|" in rendered
 
 
 # Result banner

@@ -6,8 +6,9 @@ All OpenCV drawing and mouse input: overlay, popup, result banner."""
 import cv2
 import numpy as np
 
-from config import (GRAY, GREEN, RED, SLOT_COLORS, THUMB_H, THUMB_W,
-                    WHITE, WINDOW_NAME, YELLOW)
+from config import (ENGINEER_LOGIN_KEY_LABEL, ENGINEER_LOGOUT_KEY_LABEL,
+                    ENGINEER_SCAN_KEY_LABEL, GRAY, GREEN, RED, SLOT_COLORS,
+                    THUMB_H, THUMB_W, WHITE, WINDOW_NAME, YELLOW)
 
 # OpenCV's mouse callback can't return values to the main loop directly.
 # This shared dictionary is the workaround: both the callback and the
@@ -46,7 +47,7 @@ def _dark_panel(frame, x1, y1, x2, y2, alpha=0.82):
 
 
 def draw_overlay(frame, rois, refs, live_results, thumbs, barcode,
-                 noise_thresh, diff_thresh):
+                 noise_thresh, diff_thresh, engineer_mode=False):
     """Draw ROI boxes, the top info bar, and the bottom status bar."""
     h, w = frame.shape[:2]
 
@@ -71,6 +72,13 @@ def draw_overlay(frame, rois, refs, live_results, thumbs, barcode,
     cv2.putText(frame, bc_text, (16, 34),
                 cv2.FONT_HERSHEY_DUPLEX, 0.95, YELLOW, 2, cv2.LINE_AA)
 
+    mode_text = "PRODUCTION ENGINEER" if engineer_mode else "OPERATOR"
+    mode_color = GREEN if engineer_mode else WHITE
+    (mw, _), _ = cv2.getTextSize(
+        mode_text, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 1)
+    cv2.putText(frame, mode_text, ((w - mw) // 2, 32),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.52, mode_color, 1, cv2.LINE_AA)
+
     # Measure the threshold text width first so it can be right-aligned
     thr_text = f"Noise {noise_thresh}   Threshold {diff_thresh:.1f}"
     (tw, _), _ = cv2.getTextSize(thr_text, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 1)
@@ -86,8 +94,19 @@ def draw_overlay(frame, rois, refs, live_results, thumbs, barcode,
         hint = f"Drawing Ref {mouse['active_slot']}   click and drag, release to confirm"
         cv2.putText(frame, hint, (16, bar_y + 24),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.53, YELLOW, 1, cv2.LINE_AA)
+    elif engineer_mode:
+        ctrl = (
+            "1 / 2: Draw reference     "
+            f"{ENGINEER_SCAN_KEY_LABEL}: Scan/Test     "
+            f"{ENGINEER_LOGOUT_KEY_LABEL}: Operator mode"
+        )
+        cv2.putText(frame, ctrl, (16, bar_y + 24),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.50, GRAY, 1, cv2.LINE_AA)
     else:
-        ctrl = "1 / 2: Draw reference     SCAN: Inspect     Q: Quit"
+        ctrl = (
+            "SCAN BARCODE: Inspect     "
+            f"{ENGINEER_LOGIN_KEY_LABEL}: Engineer login"
+        )
         cv2.putText(frame, ctrl, (16, bar_y + 24),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.50, GRAY, 1, cv2.LINE_AA)
 
@@ -178,6 +197,51 @@ def draw_barcode_popup(frame, text, error):
         cv2.putText(frame, error, (dx + 16, dy + 192),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.50, RED, 1, cv2.LINE_AA)
 
+    return frame
+
+
+def draw_engineer_login(frame, login):
+    """Draw the Production Engineer credential dialog. Password characters
+    are represented only by asterisks so credentials never appear on the
+    station display."""
+    h, w = frame.shape[:2]
+    cv2.convertScaleAbs(frame, frame, alpha=0.35)
+
+    dw, dh = 540, 310
+    dx = (w - dw) // 2
+    dy = (h - dh) // 2
+    cv2.rectangle(frame, (dx, dy), (dx + dw, dy + dh), (30, 30, 30), -1)
+    cv2.rectangle(frame, (dx, dy), (dx + dw, dy + dh), (100, 100, 100), 2)
+
+    cv2.putText(frame, "Production Engineer Login", (dx + 20, dy + 42),
+                cv2.FONT_HERSHEY_DUPLEX, 0.82, WHITE, 2, cv2.LINE_AA)
+    cv2.line(frame, (dx + 16, dy + 54), (dx + dw - 16, dy + 54),
+             (70, 70, 70), 1)
+
+    fields = [
+        ("Username", login["username"]),
+        ("Password", "*" * len(login["password"])),
+    ]
+    for index, (label, value) in enumerate(fields):
+        top = dy + 72 + index * 82
+        selected = login["field"] == label.lower()
+        border = YELLOW if selected else (100, 100, 100)
+        cv2.putText(frame, label, (dx + 20, top),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.48, GRAY, 1, cv2.LINE_AA)
+        cv2.rectangle(frame, (dx + 16, top + 10),
+                      (dx + dw - 16, top + 60), (50, 50, 50), -1)
+        cv2.rectangle(frame, (dx + 16, top + 10),
+                      (dx + dw - 16, top + 60), border, 2 if selected else 1)
+        cursor = "|" if selected else ""
+        cv2.putText(frame, value + cursor, (dx + 28, top + 47),
+                    cv2.FONT_HERSHEY_DUPLEX, 0.80, WHITE, 1, cv2.LINE_AA)
+
+    if login["error"]:
+        cv2.putText(frame, login["error"], (dx + 18, dy + 264),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.50, RED, 1, cv2.LINE_AA)
+    cv2.putText(frame, "TAB: switch field   ENTER: continue   ESC: cancel",
+                (dx + 18, dy + 292),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.44, GRAY, 1, cv2.LINE_AA)
     return frame
 
 

@@ -30,7 +30,9 @@ python main.py
 | `ui.py` | OpenCV drawing (overlay, popup, result banner) and mouse input |
 | `storage.py` | Saving/loading references and inspection logs |
 
-To tune behaviour (resolution, thresholds, file paths, scanner settings), edit `config.py`. No other file needs to change.
+To tune defaults (resolution, file paths, scanner settings, and access-control
+keys), edit `config.py`. Live inspection thresholds are controlled and saved
+by Production Engineer mode.
 
 ## Development and testing
 
@@ -38,7 +40,7 @@ The test suite runs anywhere, no Pi required: hardware modules (`picamera2`, `ev
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest                # 109 tests, a second or two
+python -m pytest                # full suite, a second or two
 python -m pytest --cov=.        # with the 95% coverage gate used in CI
 ```
 
@@ -46,14 +48,36 @@ Test layout mirrors the source: `tests/test_vision.py` covers the comparison mat
 
 ## How to use
 
-1. Press **`1`** or **`2`**, then click and drag on the live preview to draw a box around an O-ring. Let go, and the camera takes a high-resolution photo and saves it as the reference for that slot.
-2. On startup the tool asks for a barcode. Scan (or type) the part's barcode; it submits automatically once the full code is entered — no ENTER needed.
-3. Place the part under the camera and scan its barcode. Accepting the barcode immediately inspects the current view and shows **PASS** or **FAIL**.
-4. On a **FAIL**, the barcode stays put and the tool asks for the same barcode again before re-inspecting. On a **PASS**, it prompts for the next barcode, so parts advance one at a time like a production line.
-5. Press **`Q`** to quit.
+The application always starts in **Operator mode**. Operators place the part
+in frame and scan its barcode; accepting the barcode immediately inspects and
+logs the current view. A PASS advances to the next barcode. A FAIL requires
+the same barcode before another attempt, so an unresolved part cannot be
+silently replaced.
 
-Use the two slider bars to tune sensitivity:
-- **Noise filter**: ignore small differences caused by dust or lighting changes
-- **Diff threshold**: how different the image has to be before it counts as a FAIL
+Operator mode cannot change references or inspection sensitivity. The sliders
+remain visible, but attempted changes are ignored and restored to the saved
+calibration.
 
-Reference photos and region coordinates are saved to disk and reloaded automatically next time you run the script.
+### Production Engineer mode
+
+1. Press **`TAB`** to open the Production Engineer login.
+2. Enter the username, press **`ENTER`**, enter the password, then press
+   **`ENTER`** again. TAB switches fields and ESC cancels.
+3. Press **`1`** or **`2`**, then drag a region on the preview to replace that
+   reference.
+4. Adjust the Noise and Diff sliders. Changes take effect immediately and are
+   saved to `calibration.json`.
+5. Press **`S`** to scan a barcode for a calibration test.
+6. Press **`L`** to log out and return the station to Operator mode.
+
+Set production credentials through the station environment before deployment:
+
+```bash
+export ORING_ENGINEER_USERNAME="your-user"
+export ORING_ENGINEER_PASSWORD="your-password"
+```
+
+Without those variables, a development fallback of `engineer` / `change-me`
+is used. References and calibration survive restarts, but authenticated mode
+does not: every launch starts safely in Operator mode. Inspection CSV rows
+also record the Noise and Diff thresholds used for each verdict.

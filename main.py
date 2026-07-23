@@ -13,6 +13,7 @@ Entry point and main loop only. The rest of the system lives in:
   storage.py  reference persistence and inspection logs
 """
 
+import hmac
 import queue
 
 import cv2
@@ -20,18 +21,20 @@ import cv2
 import storage
 import ui
 from camera import capture_still, create_camera
-from config import (BARCODE_LENGTH, DEFAULT_DIFF_THRESHOLD,
-                    DEFAULT_NOISE_THRESHOLD, DIFF_TRACKBAR, GRAB_SCANNER,
-                    NOISE_TRACKBAR, PREVIEW_RESOLUTION, SCANNER_DEVICE,
-                    SCANNER_NAMES, SCANNER_SETTLE_SECONDS, WINDOW_NAME)
+from config import (BARCODE_LENGTH, DIFF_TRACKBAR, ENGINEER_LOGIN_KEY,
+                    ENGINEER_LOGOUT_KEY, ENGINEER_PASSWORD,
+                    ENGINEER_SCAN_KEY, ENGINEER_USERNAME, GRAB_SCANNER,
+                    LOGIN_FIELD_MAX_LENGTH, NOISE_TRACKBAR,
+                    PREVIEW_RESOLUTION, SCANNER_DEVICE, SCANNER_NAMES,
+                    SCANNER_SETTLE_SECONDS, WINDOW_NAME)
 from scanner import BarcodeScanner
 from vision import compare, crop, make_thumb, normalise_rect, preprocess
 
 
-def setup_window():  # pragma: no cover, requires a display and OpenCV highgui
+def setup_window(noise_thresh, diff_thresh):  # pragma: no cover, requires a display and OpenCV highgui
     """Create the display window with mouse callback and tuning sliders.
-    Slider values are read back every frame, so moving them takes effect
-    immediately."""
+    Their saved positions are visible to everyone, but only authenticated
+    Engineer mode is allowed to adopt changes."""
     # WINDOW_GUI_NORMAL disables Qt's expanded GUI (status bar, toolbar,
     # pixel picker). The pixel picker repaints on every mouse-move over
     # the image, which tanks the framerate on the Pi while hovering
@@ -39,9 +42,9 @@ def setup_window():  # pragma: no cover, requires a display and OpenCV highgui
     cv2.resizeWindow(WINDOW_NAME, *PREVIEW_RESOLUTION)
     cv2.setMouseCallback(WINDOW_NAME, ui.on_mouse)
     cv2.createTrackbar(NOISE_TRACKBAR, WINDOW_NAME,
-                       DEFAULT_NOISE_THRESHOLD, 100, lambda _: None)
+                       noise_thresh, 100, lambda _: None)
     cv2.createTrackbar(DIFF_TRACKBAR, WINDOW_NAME,
-                       DEFAULT_DIFF_THRESHOLD, 500, lambda _: None)
+                       int(round(diff_thresh * 10)), 500, lambda _: None)
 
 
 def handle_completed_roi(cam, rois, refs, thumbs, sample_crops, live_results):
@@ -108,6 +111,96 @@ def _accept_barcode(popup, text, barcode):
         popup["error"] = f"Re-scan {barcode} to re-inspect"
         return barcode
     return _commit_barcode(popup, text)
+
+
+def open_engineer_login(login, scanner):
+    """Open a clean credential dialog and discard scanner input. Barcode
+    events are not credentials, and retaining a scan made during login
+    could trigger an inspection as soon as the dialog closes."""
+    scanner.flush()
+    login.update(active=True, field="username", username="",
+                 password="", error="")
+
+
+def handle_engineer_login_key(key, login):
+    """Handle one credential-dialog key. Returns True only when the
+    configured engineer credentials were accepted."""
+    field = login["field"]
+    if key == 27:  # ESC cancels without changing the current mode
+        login.update(active=False, username="", password="", error="")
+    elif key == ENGINEER_LOGIN_KEY:  # TAB moves between the two fields
+        login["field"] = "password" if field == "username" else "username"
+        login["error"] = ""
+    elif key in (13, 10):  # ENTER advances or submits
+        if field == "username":
+            login["field"] = "password"
+        elif (hmac.compare_digest(login["username"], ENGINEER_USERNAME)
+              and hmac.compare_digest(login["password"], ENGINEER_PASSWORD)):
+            login.update(active=False, username="", password="", error="")
+            return True
+        else:
+            # Keep the error generic so the dialog does not reveal which
+            # half of the credential pair was correct.
+            login.update(field="password", password="",
+                         error="Invalid username or password")
+    elif key == 8:  # BACKSPACE
+        login[field] = login[field][:-1]
+        login["error"] = ""
+    elif 32 <= key <= 126 and len(login[field]) < LOGIN_FIELD_MAX_LENGTH:
+        login[field] += chr(key)
+        login["error"] = ""
+    return False
+
+
+def disarm_roi():
+    """Cancel reference drawing whenever privilege changes so a rectangle
+    armed in Engineer mode cannot be released later in Operator mode."""
+    ui.mouse.update(active_slot=None, drawing=False, roi_ready=False)
+
+
+def arm_reference(slot, engineer_mode):
+    """Arm a reference slot only for an authenticated engineer. Keeping
+    this permission check beside the state mutation prevents UI changes
+    from accidentally exposing calibration to Operator mode."""
+    if not engineer_mode:
+        return False
+    ui.mouse.update(active_slot=slot, drawing=False, roi_ready=False)
+    return True
+
+
+def handle_pending_roi(engineer_mode, cam, rois, refs, thumbs,
+                       sample_crops, live_results):
+    """Complete an armed reference only while Engineer mode is still active.
+    Authorization is checked again on mouse-up because login state can
+    change between arming a slot and releasing the button."""
+    if not ui.mouse["roi_ready"] or ui.mouse["active_slot"] is None:
+        return False
+    if not engineer_mode:
+        disarm_roi()
+        return False
+    handle_completed_roi(cam, rois, refs, thumbs,
+                         sample_crops, live_results)
+    return True
+
+
+def sync_thresholds(engineer_mode, noise_thresh, diff_thresh):
+    """Read and persist sliders only for an authenticated engineer.
+    Operator mode restores the saved positions before inspection, because
+    OpenCV trackbars cannot be disabled and must never become an authority."""
+    if not engineer_mode:
+        diff_position = int(round(diff_thresh * 10))
+        if cv2.getTrackbarPos(NOISE_TRACKBAR, WINDOW_NAME) != noise_thresh:
+            cv2.setTrackbarPos(NOISE_TRACKBAR, WINDOW_NAME, noise_thresh)
+        if cv2.getTrackbarPos(DIFF_TRACKBAR, WINDOW_NAME) != diff_position:
+            cv2.setTrackbarPos(
+                DIFF_TRACKBAR, WINDOW_NAME, diff_position)
+        return noise_thresh, diff_thresh
+
+    new_noise = cv2.getTrackbarPos(NOISE_TRACKBAR, WINDOW_NAME)
+    new_diff = cv2.getTrackbarPos(DIFF_TRACKBAR, WINDOW_NAME) / 10.0
+    if (new_noise, new_diff) != (noise_thresh, diff_thresh):
+        storage.save_thresholds(new_noise, new_diff)
+    return new_noise, new_diff
 
 
 def handle_popup_key(key, popup, scanner, barcode):
@@ -196,7 +289,8 @@ def run_inspection(cam, active_refs, rois, sample_crops, live_results,
 
 def main():  # pragma: no cover, drives real camera and GUI; logic lives in the tested helpers
     cam = create_camera()
-    setup_window()
+    noise_thresh, diff_thresh = storage.load_thresholds()
+    setup_window(noise_thresh, diff_thresh)
 
     # Load anything saved by a previous session
     rois, refs, thumbs = storage.load_references()
@@ -204,38 +298,46 @@ def main():  # pragma: no cover, drives real camera and GUI; logic lives in the 
     sample_crops = {}      # {slot: preprocessed crop} from the most recent inspection
     live_results = {}      # {slot: (passed, diff_val)} shown in the status bar
     current_barcode = None
+    engineer_mode = False  # authentication is intentionally never persisted
 
     popup = {"active": False, "text": "", "error": "",
              "inspection_requested": False}
+    login = {"active": False, "field": "username", "username": "",
+             "password": "", "error": ""}
 
     # Falls back to manual typing if no scanner is present
     scanner = BarcodeScanner(device_path=SCANNER_DEVICE,
                              names=SCANNER_NAMES, grab=GRAB_SCANNER,
                              settle=SCANNER_SETTLE_SECONDS)
 
-    # Show the barcode popup straight away: the operator must set a
-    # barcode before anything else, and this avoids blocking on a
-    # terminal input() call
-    open_popup(popup, scanner)
+    # Operator mode is the safe startup default. If calibration has not
+    # been completed, direct the user to an engineer instead of accepting
+    # a barcode that cannot be inspected.
+    active_refs = {s: r for s, r in refs.items() if s in rois}
+    startup_error = "" if active_refs else "Engineer setup required - press TAB"
+    open_popup(popup, scanner, error=startup_error)
 
     try:
         while True:
-            # Read slider values fresh every frame so changes apply immediately
-            noise_thresh = cv2.getTrackbarPos(NOISE_TRACKBAR, WINDOW_NAME)
-            diff_thresh = cv2.getTrackbarPos(DIFF_TRACKBAR, WINDOW_NAME) / 10.0
+            # Trackbars remain visible in OpenCV, but only Engineer mode is
+            # allowed to turn their positions into inspection settings.
+            noise_thresh, diff_thresh = sync_thresholds(
+                engineer_mode, noise_thresh, diff_thresh)
 
             # Take scanner input only while the popup is asking for a
-            # barcode, so a new part is accepted only between inspections
-            current_barcode = poll_scanner(scanner, popup, current_barcode)
+            # barcode. Login suspends scanner consumption, and an Operator
+            # cannot start an inspection until at least one reference exists.
+            active_refs = {s: r for s, r in refs.items() if s in rois}
+            if not login["active"] and active_refs:
+                current_barcode = poll_scanner(
+                    scanner, popup, current_barcode)
 
-            # Act on a finished ROI draw (mouse released)
-            if ui.mouse["roi_ready"] and ui.mouse["active_slot"] is not None:
-                handle_completed_roi(cam, rois, refs, thumbs,
-                                     sample_crops, live_results)
+            # Check authorization again at capture time. This blocks a
+            # rectangle armed before logout from replacing a reference.
+            handle_pending_roi(
+                engineer_mode, cam, rois, refs, thumbs,
+                sample_crops, live_results)
 
-            # Accepting a barcode is the inspection trigger. Keep the
-            # request pending if no reference exists yet so first-time
-            # setup can finish drawing one without scanning the part twice.
             active_refs = {s: r for s, r in refs.items() if s in rois}
             if popup["inspection_requested"] and active_refs:
                 # Consume this request before capture so one scan can never
@@ -250,26 +352,32 @@ def main():  # pragma: no cover, drives real camera and GUI; logic lives in the 
                 display = ui.draw_overlay(still.copy(), rois, refs,
                                           live_results, thumbs,
                                           current_barcode,
-                                          noise_thresh, diff_thresh)
+                                          noise_thresh, diff_thresh,
+                                          engineer_mode)
                 storage.save_inspection(current_barcode, display,
-                                        per_slot, overall_passed)
+                                        per_slot, overall_passed,
+                                        noise_thresh, diff_thresh)
                 ui.flash_result(display, overall_passed, per_slot)
 
                 if overall_passed:
                     print(f"{current_barcode} passed. Scan the next barcode.")
                     current_barcode = None
-                    open_popup(popup, scanner)
+                    if engineer_mode:
+                        # Return to the unobstructed calibration view.
+                        popup.update(active=False, text="", error="",
+                                     inspection_requested=False)
+                    else:
+                        open_popup(popup, scanner)
                 else:
-                    # Reopen scanner input after a failure because SPACE is
-                    # no longer part of the workflow. _accept_barcode keeps
-                    # this part gated until its same barcode is scanned.
+                    # The same barcode is required before another attempt,
+                    # so a failed part cannot be silently replaced.
                     open_popup(
                         popup, scanner,
                         error=f"FAIL - re-scan {current_barcode} to re-inspect")
                 continue
 
-            # If the operator moves a slider, re-run the comparison on the
-            # last captured sample so tuning does not require another scan
+            # Engineers get immediate feedback from the last sample while
+            # calibrating; Operator values are fixed by sync_thresholds.
             for slot, ref_proc in refs.items():
                 if slot in sample_crops:
                     live_results[slot] = compare(ref_proc, sample_crops[slot],
@@ -280,12 +388,16 @@ def main():  # pragma: no cover, drives real camera and GUI; logic lives in the 
             frame = capture_still(cam)
             display = ui.draw_overlay(frame.copy(), rois, refs, live_results,
                                       thumbs, current_barcode,
-                                      noise_thresh, diff_thresh)
+                                      noise_thresh, diff_thresh,
+                                      engineer_mode)
 
-            if popup["active"]:
+            if popup["active"] and not login["active"]:
                 # Show the live scan being assembled, or the typed text
                 shown = scanner.snapshot() or popup["text"]
                 display = ui.draw_barcode_popup(display, shown, popup["error"])
+
+            if login["active"]:
+                display = ui.draw_engineer_login(display, login)
 
             cv2.imshow(WINDOW_NAME, display)
 
@@ -293,19 +405,68 @@ def main():  # pragma: no cover, drives real camera and GUI; logic lives in the 
             # 8 bits, needed on some platforms for correct key codes
             key = cv2.waitKey(1) & 0xFF
 
+            if login["active"]:
+                authenticated = handle_engineer_login_key(key, login)
+                if not login["active"]:
+                    # Discard anything scanned while credentials were being
+                    # entered before barcode polling resumes.
+                    scanner.flush()
+                if authenticated:
+                    engineer_mode = True
+                    disarm_roi()
+                    popup.update(active=False, text="", error="",
+                                 inspection_requested=False)
+                    print("Production Engineer mode enabled")
+                continue
+
+            # TAB is checked before barcode typing because the barcode popup
+            # is normally active throughout Operator mode.
+            if not engineer_mode and key == ENGINEER_LOGIN_KEY:
+                open_engineer_login(login, scanner)
+                continue
+
+            if engineer_mode and key in (
+                    ord(ENGINEER_LOGOUT_KEY.lower()),
+                    ord(ENGINEER_LOGOUT_KEY.upper())):
+                engineer_mode = False
+                disarm_roi()
+                retry_error = (
+                    f"Re-scan {current_barcode} to re-inspect"
+                    if current_barcode is not None else
+                    ("" if active_refs else
+                     "Engineer setup required - press TAB")
+                )
+                open_popup(popup, scanner, error=retry_error)
+                print("Operator mode enabled")
+                continue
+
+            if engineer_mode and not popup["active"] and key in (
+                    ord(ENGINEER_SCAN_KEY.lower()),
+                    ord(ENGINEER_SCAN_KEY.upper())):
+                error = "" if active_refs else "Set a reference before testing"
+                open_popup(popup, scanner, error=error)
+                continue
+
+            if engineer_mode and key in (ord('1'), ord('2')):
+                # Reference keys take priority over a barcode popup so the
+                # engineer can always enter calibration. Scanner input is
+                # flushed because that popup is being intentionally closed.
+                popup.update(active=False, text="", error="",
+                             inspection_requested=False)
+                scanner.flush()
+                arm_reference(int(chr(key)), engineer_mode)
+                continue
+
             if popup["active"]:
-                current_barcode = handle_popup_key(key, popup, scanner,
-                                                   current_barcode)
+                if active_refs:
+                    current_barcode = handle_popup_key(
+                        key, popup, scanner, current_barcode)
+                else:
+                    popup["error"] = "Engineer setup required - press TAB"
                 continue  # don't fall through to normal key handling
 
             if key == ord('q'):
                 break
-
-            elif key in (ord('1'), ord('2')):
-                # Arm ROI drawing for the chosen slot
-                ui.mouse["active_slot"] = int(chr(key))
-                ui.mouse["drawing"] = False
-                ui.mouse["roi_ready"] = False
 
     finally:
         # Always release the camera, scanner, and windows, even on exception

@@ -70,6 +70,12 @@ def popup():
     return {"active": True, "text": "", "error": ""}
 
 
+@pytest.fixture
+def login():
+    return {"active": True, "field": "username", "username": "",
+            "password": "", "error": ""}
+
+
 ENTER, ESC, BACKSPACE = 13, 27, 8
 
 
@@ -290,6 +296,180 @@ def test_open_popup_resets_text_and_sets_error():
                      "inspection_requested": False}
 
 
+# Production Engineer authentication and permissions
+
+def test_open_engineer_login_flushes_scanner_and_resets_fields():
+    scanner = PollScanner(completed=["STRAY77"], partial="ABC1234")
+    login = {"active": False, "field": "password", "username": "old",
+             "password": "secret", "error": "stale"}
+
+    main.open_engineer_login(login, scanner)
+
+    assert login == {"active": True, "field": "username", "username": "",
+                     "password": "", "error": ""}
+    assert scanner.snapshot() == ""
+    assert scanner.results.empty()
+
+
+def test_engineer_login_accepts_configured_credentials(login, monkeypatch):
+    monkeypatch.setattr(main, "ENGINEER_USERNAME", "prod")
+    monkeypatch.setattr(main, "ENGINEER_PASSWORD", "safe-pass")
+
+    for ch in "prod":
+        assert not main.handle_engineer_login_key(ord(ch), login)
+    assert not main.handle_engineer_login_key(ENTER, login)
+    for ch in "safe-pass":
+        assert not main.handle_engineer_login_key(ord(ch), login)
+
+    assert main.handle_engineer_login_key(ENTER, login)
+    assert not login["active"]
+    assert login["username"] == ""
+    assert login["password"] == ""
+
+
+def test_engineer_login_rejects_bad_credentials(login, monkeypatch):
+    monkeypatch.setattr(main, "ENGINEER_USERNAME", "prod")
+    monkeypatch.setattr(main, "ENGINEER_PASSWORD", "safe-pass")
+    login.update(field="password", username="prod", password="wrong")
+
+    assert not main.handle_engineer_login_key(ENTER, login)
+    assert login["active"]
+    assert login["field"] == "password"
+    assert login["password"] == ""
+    assert login["error"] == "Invalid username or password"
+
+
+def test_engineer_login_tab_backspace_and_escape(login):
+    main.handle_engineer_login_key(ord('A'), login)
+    main.handle_engineer_login_key(BACKSPACE, login)
+    assert login["username"] == ""
+
+    main.handle_engineer_login_key(config.ENGINEER_LOGIN_KEY, login)
+    assert login["field"] == "password"
+    main.handle_engineer_login_key(ESC, login)
+    assert not login["active"]
+
+
+def test_engineer_login_limits_field_length(login):
+    for _ in range(config.LOGIN_FIELD_MAX_LENGTH + 5):
+        main.handle_engineer_login_key(ord('A'), login)
+    assert len(login["username"]) == config.LOGIN_FIELD_MAX_LENGTH
+
+
+def test_reference_arming_requires_engineer_mode():
+    assert not main.arm_reference(1, engineer_mode=False)
+    assert ui.mouse["active_slot"] is None
+
+    assert main.arm_reference(2, engineer_mode=True)
+    assert ui.mouse["active_slot"] == 2
+
+
+def test_disarm_roi_clears_privileged_mouse_state():
+    ui.mouse.update(active_slot=1, drawing=True, roi_ready=True)
+    main.disarm_roi()
+    assert ui.mouse["active_slot"] is None
+    assert not ui.mouse["drawing"]
+    assert not ui.mouse["roi_ready"]
+
+
+def test_pending_reference_is_ignored_without_mouse_release():
+    assert not main.handle_pending_roi(
+        True, FakeCamera([]), {}, {}, {}, {}, {})
+
+
+def test_operator_cannot_complete_prearmed_reference(workdir):
+    ui.mouse.update(active_slot=1, drawing=False, roi_ready=True,
+                    pt1=(100, 100), pt2=(300, 300))
+
+    completed = main.handle_pending_roi(
+        False, FakeCamera([]), {}, {}, {}, {}, {})
+
+    assert not completed
+    assert ui.mouse["active_slot"] is None
+    assert not os.path.exists(config.REFERENCE_PATHS[0])
+
+
+def test_engineer_can_complete_pending_reference(workdir, rng):
+    still = rng.integers(0, 255, (960, 1280, 3), dtype=np.uint8)
+    rois, refs, thumbs = {}, {}, {}
+    ui.mouse.update(active_slot=1, drawing=False, roi_ready=True,
+                    pt1=(100, 100), pt2=(300, 300))
+
+    completed = main.handle_pending_roi(
+        True, FakeCamera([still]), rois, refs, thumbs, {}, {})
+
+    assert completed
+    assert rois[1] == (100, 100, 300, 300)
+
+
+def test_operator_threshold_sync_ignores_trackbar_values(monkeypatch):
+    positions = []
+    attempted = {
+        config.NOISE_TRACKBAR: 99,
+        config.DIFF_TRACKBAR: 499,
+    }
+    monkeypatch.setattr(
+        cv2, "setTrackbarPos",
+        lambda name, window, value: positions.append((name, window, value)))
+    monkeypatch.setattr(
+        cv2, "getTrackbarPos",
+        lambda name, window: attempted[name])
+
+    thresholds = main.sync_thresholds(False, 31, 4.2)
+
+    assert thresholds == (31, 4.2)
+    assert positions == [
+        (config.NOISE_TRACKBAR, config.WINDOW_NAME, 31),
+        (config.DIFF_TRACKBAR, config.WINDOW_NAME, 42),
+    ]
+
+
+def test_operator_threshold_sync_does_not_rewrite_matching_positions(monkeypatch):
+    positions = {
+        config.NOISE_TRACKBAR: 31,
+        config.DIFF_TRACKBAR: 42,
+    }
+    monkeypatch.setattr(
+        cv2, "getTrackbarPos", lambda name, window: positions[name])
+    monkeypatch.setattr(
+        cv2, "setTrackbarPos",
+        lambda *args: pytest.fail("Matching trackbars should be left alone"))
+
+    assert main.sync_thresholds(False, 31, 4.2) == (31, 4.2)
+
+
+def test_engineer_threshold_sync_persists_changes(monkeypatch):
+    positions = {
+        config.NOISE_TRACKBAR: 37,
+        config.DIFF_TRACKBAR: 64,
+    }
+    saved = []
+    monkeypatch.setattr(
+        cv2, "getTrackbarPos", lambda name, window: positions[name])
+    monkeypatch.setattr(
+        storage, "save_thresholds",
+        lambda noise, diff: saved.append((noise, diff)))
+
+    thresholds = main.sync_thresholds(True, 30, 5.0)
+
+    assert thresholds == (37, 6.4)
+    assert saved == [(37, 6.4)]
+
+
+def test_unchanged_engineer_thresholds_are_not_rewritten(monkeypatch):
+    positions = {
+        config.NOISE_TRACKBAR: 30,
+        config.DIFF_TRACKBAR: 50,
+    }
+    monkeypatch.setattr(
+        cv2, "getTrackbarPos", lambda name, window: positions[name])
+    monkeypatch.setattr(
+        storage, "save_thresholds",
+        lambda *args: pytest.fail("Unchanged settings should not be saved"))
+
+    assert main.sync_thresholds(True, 30, 5.0) == (30, 5.0)
+
+
 # ROI capture
 
 def _drag(slot, pt1, pt2):
@@ -400,7 +580,7 @@ def test_full_workflow_reference_then_inspection(workdir, rng):
             FakeCamera([still]), refs2, rois2, {}, {}, 30, 5.0)
         assert overall is expect_pass
         storage.save_inspection("LOT42", cv2.cvtColor(still, cv2.COLOR_RGB2BGR),
-                                per_slot, overall)
+                                per_slot, overall, 30, 5.0)
 
     # Both inspections landed in the barcode's log
     log = os.path.join(config.LOGS_DIR, "LOT42", "log.csv")

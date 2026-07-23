@@ -4,14 +4,50 @@ storage.py
 Persistence: reference images, ROI coordinates, and inspection logs."""
 
 import csv
+import json
 import os
 from datetime import datetime
 
 import cv2
 import numpy as np
 
-from config import GREEN, LOGS_DIR, RED, REFERENCE_PATHS, ROI_PATHS
+from config import (CALIBRATION_PATH, DEFAULT_DIFF_THRESHOLD,
+                    DEFAULT_NOISE_THRESHOLD, GREEN, LOGS_DIR, RED,
+                    REFERENCE_PATHS, ROI_PATHS)
 from vision import load_thumb, preprocess
+
+
+LEGACY_LOG_HEADER = [
+    "timestamp", "barcode", "overall",
+    "slot1", "slot1_diff", "slot2", "slot2_diff",
+]
+LOG_HEADER = LEGACY_LOG_HEADER + ["noise_threshold", "diff_threshold"]
+
+
+def load_thresholds():
+    """Load the engineer's saved slider settings, falling back to config
+    defaults if the file is absent or damaged. A bad calibration file must
+    not prevent the inspection station from starting."""
+    default = DEFAULT_NOISE_THRESHOLD, DEFAULT_DIFF_THRESHOLD / 10.0
+    try:
+        with open(CALIBRATION_PATH) as f:
+            saved = json.load(f)
+        noise = int(saved["noise_threshold"])
+        diff = float(saved["diff_threshold"])
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return default
+    if not 0 <= noise <= 100 or not 0.0 <= diff <= 50.0:
+        return default
+    return noise, diff
+
+
+def save_thresholds(noise_thresh, diff_thresh):
+    """Persist an authenticated calibration change for future restarts."""
+    with open(CALIBRATION_PATH, "w") as f:
+        json.dump({
+            "noise_threshold": int(noise_thresh),
+            "diff_threshold": float(diff_thresh),
+        }, f, indent=2)
 
 
 def load_references():
@@ -48,9 +84,29 @@ def safe_folder_name(barcode):
     return safe
 
 
-def save_inspection(barcode, frame, per_slot, overall_passed):
+def _upgrade_legacy_log(log_path):
+    """Add threshold columns to logs created before sensitivities were saved.
+    Old rows use N/A because inventing the settings used for a past
+    inspection would make the production record misleading."""
+    if not os.path.exists(log_path):
+        return
+    with open(log_path, newline="") as f:
+        rows = list(csv.reader(f))
+    if not rows or rows[0] != LEGACY_LOG_HEADER:
+        return
+    rows[0] = LOG_HEADER
+    for row in rows[1:]:
+        row.extend(["N/A", "N/A"])
+    with open(log_path, "w", newline="") as f:
+        csv.writer(f).writerows(rows)
+
+
+def save_inspection(barcode, frame, per_slot, overall_passed,
+                    noise_thresh, diff_thresh):
     """Save the annotated inspection image and append a CSV log row.
-    Each barcode gets its own folder so results are easy to browse by part."""
+    Each barcode gets its own folder so results are easy to browse by part.
+    Thresholds are recorded with the verdict because live slider changes
+    otherwise make a historical PASS or FAIL impossible to reproduce."""
     folder = os.path.join(LOGS_DIR, safe_folder_name(barcode))
     os.makedirs(folder, exist_ok=True)
 
@@ -70,12 +126,12 @@ def save_inspection(barcode, frame, per_slot, overall_passed):
     # Append one row to this barcode's CSV, writing the header first if
     # this is the first inspection for the barcode
     log_path = os.path.join(folder, "log.csv")
+    _upgrade_legacy_log(log_path)
     write_header = not os.path.exists(log_path)
     with open(log_path, "a", newline="") as f:
         writer = csv.writer(f)
         if write_header:
-            writer.writerow(["timestamp", "barcode", "overall",
-                             "slot1", "slot1_diff", "slot2", "slot2_diff"])
+            writer.writerow(LOG_HEADER)
         row = [ts, barcode, verdict]
         for slot in [1, 2]:
             if slot in per_slot:
@@ -83,6 +139,7 @@ def save_inspection(barcode, frame, per_slot, overall_passed):
                 row += ["PASS" if p else "FAIL", f"{d:.1f}"]
             else:
                 row += ["N/A", "N/A"]
+        row += [str(noise_thresh), f"{diff_thresh:.1f}"]
         writer.writerow(row)
 
     print(f"Saved: {img_path}")
