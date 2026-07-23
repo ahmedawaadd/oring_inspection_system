@@ -58,43 +58,51 @@ def test_load_references_empty_directory(workdir):
 # Inspection logging
 
 def test_save_inspection_writes_image_and_csv(workdir, frame):
-    storage.save_inspection("ABC123", frame, {1: (True, 3.2)}, True)
+    storage.save_inspection("ABC123", frame, {1: (True, 3.2)}, True, 30, 5.0)
     files = os.listdir(os.path.join(config.LOGS_DIR, "ABC123"))
     assert "log.csv" in files
     assert any(f.endswith("_PASS.jpg") for f in files)
 
 
 def test_save_inspection_fail_verdict_in_filename(workdir, frame):
-    storage.save_inspection("ABC123", frame, {1: (False, 9.9)}, False)
+    storage.save_inspection("ABC123", frame, {1: (False, 9.9)}, False, 30, 5.0)
     files = os.listdir(os.path.join(config.LOGS_DIR, "ABC123"))
     assert any(f.endswith("_FAIL.jpg") for f in files)
 
 
 def test_csv_header_matches_documented_schema(workdir, frame):
-    storage.save_inspection("ABC123", frame, {1: (True, 3.2)}, True)
+    storage.save_inspection("ABC123", frame, {1: (True, 3.2)}, True, 30, 5.0)
     rows = _read_log("ABC123")
     assert rows[0] == ["timestamp", "barcode", "overall",
-                       "slot1", "slot1_diff", "slot2", "slot2_diff"]
+                       "slot1", "slot1_diff", "slot2", "slot2_diff",
+                       "noise_threshold", "diff_threshold"]
 
 
 def test_csv_header_written_only_once(workdir, frame):
-    storage.save_inspection("ABC123", frame, {1: (True, 3.2)}, True)
-    storage.save_inspection("ABC123", frame, {1: (False, 9.9)}, False)
+    storage.save_inspection("ABC123", frame, {1: (True, 3.2)}, True, 30, 5.0)
+    storage.save_inspection("ABC123", frame, {1: (False, 9.9)}, False, 40, 7.5)
     rows = _read_log("ABC123")
     assert len(rows) == 3  # one header, two data rows
     assert rows[2][2] == "FAIL"
 
 
 def test_missing_slot_logged_as_na(workdir, frame):
-    storage.save_inspection("ABC123", frame, {1: (True, 3.2)}, True)
+    storage.save_inspection("ABC123", frame, {1: (True, 3.2)}, True, 30, 5.0)
     rows = _read_log("ABC123")
-    assert rows[1][3:] == ["PASS", "3.2", "N/A", "N/A"]
+    assert rows[1][3:7] == ["PASS", "3.2", "N/A", "N/A"]
 
 
 def test_both_slots_logged(workdir, frame):
-    storage.save_inspection("X", frame, {1: (True, 1.0), 2: (False, 8.5)}, False)
+    storage.save_inspection(
+        "X", frame, {1: (True, 1.0), 2: (False, 8.5)}, False, 30, 5.0)
     rows = _read_log("X")
-    assert rows[1][3:] == ["PASS", "1.0", "FAIL", "8.5"]
+    assert rows[1][3:7] == ["PASS", "1.0", "FAIL", "8.5"]
+
+
+def test_thresholds_logged_at_time_of_inspection(workdir, frame):
+    storage.save_inspection("ABC123", frame, {1: (True, 3.2)}, True, 37, 6.4)
+    rows = _read_log("ABC123")
+    assert rows[1][-2:] == ["37", "6.4"]
 
 
 # Barcode sanitization: scanned input becomes a folder name
@@ -112,7 +120,7 @@ def test_safe_folder_name_neutralises_path_traversal(barcode):
 
 
 def test_hostile_barcode_stays_inside_logs_dir(workdir, frame):
-    storage.save_inspection("../evil", frame, {1: (True, 1.0)}, True)
+    storage.save_inspection("../evil", frame, {1: (True, 1.0)}, True, 30, 5.0)
     logs = os.path.realpath(config.LOGS_DIR)
     for root, _, files in os.walk(logs):
         for f in files:

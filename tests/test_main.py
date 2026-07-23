@@ -400,7 +400,7 @@ def test_full_workflow_reference_then_inspection(workdir, rng):
             FakeCamera([still]), refs2, rois2, {}, {}, 30, 5.0)
         assert overall is expect_pass
         storage.save_inspection("LOT42", cv2.cvtColor(still, cv2.COLOR_RGB2BGR),
-                                per_slot, overall)
+                                per_slot, overall, 30, 5.0)
 
     # Both inspections landed in the barcode's log
     log = os.path.join(config.LOGS_DIR, "LOT42", "log.csv")

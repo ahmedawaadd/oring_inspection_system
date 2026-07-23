@@ -252,7 +252,8 @@ def main():  # pragma: no cover, drives real camera and GUI; logic lives in the 
                                           current_barcode,
                                           noise_thresh, diff_thresh)
                 storage.save_inspection(current_barcode, display,
-                                        per_slot, overall_passed)
+                                        per_slot, overall_passed,
+                                        noise_thresh, diff_thresh)
                 ui.flash_result(display, overall_passed, per_slot)
 
                 if overall_passed:
