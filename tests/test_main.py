@@ -84,7 +84,7 @@ def test_typing_appends_characters(popup):
 
 
 def test_typing_auto_commits_at_barcode_length(popup):
-    # A full-length barcode submits on its own, no ENTER needed
+    # A full-length barcode submits and requests inspection on its own
     s = NoBufferScanner()
     bc = None
     for ch in "ABC1234":  # BARCODE_LENGTH == 7 characters
@@ -92,6 +92,7 @@ def test_typing_auto_commits_at_barcode_length(popup):
     assert bc == "ABC1234"
     assert not popup["active"]
     assert popup["text"] == ""
+    assert popup["inspection_requested"]
 
 
 def test_typing_does_not_commit_before_barcode_length(popup):
@@ -181,11 +182,12 @@ def test_esc_closes_when_barcode_already_set(popup):
 # Scanner polling (only accepted while the popup is open)
 
 def test_poll_scanner_commits_completed_scan(popup):
-    # A scan terminated by the scanner's own ENTER arrives on the queue
+    # A completed scan closes the popup and becomes an inspection request
     s = PollScanner(completed=["ABC1234"])
     bc = main.poll_scanner(s, popup, None)
     assert bc == "ABC1234"
     assert not popup["active"]
+    assert popup["inspection_requested"]
 
 
 def test_poll_scanner_auto_commits_partial_at_length(popup):
@@ -245,6 +247,25 @@ def test_poll_scanner_rejects_wrong_length_completed_scan(popup):
     assert popup["error"] == "Barcode must be 7 characters"
 
 
+def test_poll_scanner_rejects_different_barcode_after_failure(popup):
+    # A failed part owns the station until its same barcode is rescanned;
+    # otherwise a new part could silently advance past an unresolved fail.
+    s = PollScanner(completed=["NEW5678"])
+    bc = main.poll_scanner(s, popup, "OLD1234")
+    assert bc == "OLD1234"
+    assert popup["active"]
+    assert not popup.get("inspection_requested", False)
+    assert popup["error"] == "Re-scan OLD1234 to re-inspect"
+
+
+def test_poll_scanner_accepts_same_barcode_for_reinspection(popup):
+    s = PollScanner(completed=["OLD1234"])
+    bc = main.poll_scanner(s, popup, "OLD1234")
+    assert bc == "OLD1234"
+    assert not popup["active"]
+    assert popup["inspection_requested"]
+
+
 # Popup opening (must discard scanner input collected while closed)
 
 def test_open_popup_discards_scans_made_while_closed():
@@ -261,10 +282,12 @@ def test_open_popup_discards_scans_made_while_closed():
 
 
 def test_open_popup_resets_text_and_sets_error():
-    popup = {"active": False, "text": "stale", "error": ""}
+    popup = {"active": False, "text": "stale", "error": "",
+             "inspection_requested": True}
     main.open_popup(popup, PollScanner(), error="Set a barcode before inspecting")
     assert popup == {"active": True, "text": "",
-                     "error": "Set a barcode before inspecting"}
+                     "error": "Set a barcode before inspecting",
+                     "inspection_requested": False}
 
 
 # ROI capture
@@ -355,7 +378,7 @@ def test_run_inspection_all_pass(workdir, rng):
     assert per_slot[1][1] == 0.0
 
 
-# End-to-end workflow (no GUI): draw ROI, inspect, verify the log
+# End-to-end processing (no GUI): draw ROI, inspect, verify the log
 
 def test_full_workflow_reference_then_inspection(workdir, rng):
     part_a = rng.integers(0, 255, (960, 1280, 3), dtype=np.uint8)

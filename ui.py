@@ -87,7 +87,7 @@ def draw_overlay(frame, rois, refs, live_results, thumbs, barcode,
         cv2.putText(frame, hint, (16, bar_y + 24),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.53, YELLOW, 1, cv2.LINE_AA)
     else:
-        ctrl = "1 / 2: Draw reference     SPACE: Inspect     Q: Quit"
+        ctrl = "1 / 2: Draw reference     SCAN: Inspect     Q: Quit"
         cv2.putText(frame, ctrl, (16, bar_y + 24),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.50, GRAY, 1, cv2.LINE_AA)
 
