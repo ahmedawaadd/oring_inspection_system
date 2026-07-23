@@ -48,7 +48,8 @@ def safe_folder_name(barcode):
     return safe
 
 
-def save_inspection(barcode, frame, per_slot, overall_passed):
+def save_inspection(barcode, frame, per_slot, overall_passed,
+                    noise_thresh, diff_thresh):
     """Save the annotated inspection image and append a CSV log row.
     Each barcode gets its own folder so results are easy to browse by part."""
     folder = os.path.join(LOGS_DIR, safe_folder_name(barcode))
@@ -75,7 +76,8 @@ def save_inspection(barcode, frame, per_slot, overall_passed):
         writer = csv.writer(f)
         if write_header:
             writer.writerow(["timestamp", "barcode", "overall",
-                             "slot1", "slot1_diff", "slot2", "slot2_diff"])
+                             "slot1", "slot1_diff", "slot2", "slot2_diff",
+                             "noise_threshold", "diff_threshold"])
         row = [ts, barcode, verdict]
         for slot in [1, 2]:
             if slot in per_slot:
@@ -83,6 +85,7 @@ def save_inspection(barcode, frame, per_slot, overall_passed):
                 row += ["PASS" if p else "FAIL", f"{d:.1f}"]
             else:
                 row += ["N/A", "N/A"]
+        row += [noise_thresh, f"{diff_thresh:.1f}"]
         writer.writerow(row)
 
     print(f"Saved: {img_path}")
