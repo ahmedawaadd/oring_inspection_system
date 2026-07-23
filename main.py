@@ -77,13 +77,17 @@ def open_popup(popup, scanner, error=""):
     barcode was being asked for would be committed the instant the popup
     reopens, logging the next part under the wrong barcode."""
     scanner.flush()
-    popup.update(active=True, text="", error=error)
+    popup.update(active=True, text="", error=error,
+                 inspection_requested=False)
 
 
 def _commit_barcode(popup, text):
     """Accept `text` as the current barcode: close the popup and clear its
-    state. Returns the barcode so callers can update their own variable."""
-    popup.update(active=False, text="", error="")
+    entry state. The inspection flag lets scanner and manual entry share
+    one trigger without either input path touching camera hardware.
+    Returns the barcode so callers can update their own variable."""
+    popup.update(active=False, text="", error="",
+                 inspection_requested=True)
     print(f"Barcode set to {text}")
     return text
 
@@ -94,10 +98,16 @@ def _accept_barcode(popup, text, barcode):
     over-long code would put wrong data in the inspection log, which is
     far worse than making the operator rescan. Returns the (possibly
     updated) current barcode."""
-    if len(text) == BARCODE_LENGTH:
-        return _commit_barcode(popup, text)
-    popup["error"] = f"Barcode must be {BARCODE_LENGTH} characters"
-    return barcode
+    if len(text) != BARCODE_LENGTH:
+        popup["error"] = f"Barcode must be {BARCODE_LENGTH} characters"
+        return barcode
+    # A failed part keeps its barcode. Requiring that same code for the
+    # next attempt prevents a different part from silently replacing it
+    # before the failure has been cleared.
+    if barcode is not None and text != barcode:
+        popup["error"] = f"Re-scan {barcode} to re-inspect"
+        return barcode
+    return _commit_barcode(popup, text)
 
 
 def handle_popup_key(key, popup, scanner, barcode):
@@ -195,7 +205,8 @@ def main():  # pragma: no cover, drives real camera and GUI; logic lives in the 
     live_results = {}      # {slot: (passed, diff_val)} shown in the status bar
     current_barcode = None
 
-    popup = {"active": False, "text": "", "error": ""}
+    popup = {"active": False, "text": "", "error": "",
+             "inspection_requested": False}
 
     # Falls back to manual typing if no scanner is present
     scanner = BarcodeScanner(device_path=SCANNER_DEVICE,
@@ -222,8 +233,43 @@ def main():  # pragma: no cover, drives real camera and GUI; logic lives in the 
                 handle_completed_roi(cam, rois, refs, thumbs,
                                      sample_crops, live_results)
 
+            # Accepting a barcode is the inspection trigger. Keep the
+            # request pending if no reference exists yet so first-time
+            # setup can finish drawing one without scanning the part twice.
+            active_refs = {s: r for s, r in refs.items() if s in rois}
+            if popup["inspection_requested"] and active_refs:
+                # Consume this request before capture so one scan can never
+                # produce duplicate log entries if later work is slow.
+                popup["inspection_requested"] = False
+                still, per_slot, overall_passed = run_inspection(
+                    cam, active_refs, rois, sample_crops, live_results,
+                    noise_thresh, diff_thresh)
+
+                # Draw from the inspection still after live_results updates,
+                # otherwise the saved image would show the previous verdict.
+                display = ui.draw_overlay(still.copy(), rois, refs,
+                                          live_results, thumbs,
+                                          current_barcode,
+                                          noise_thresh, diff_thresh)
+                storage.save_inspection(current_barcode, display,
+                                        per_slot, overall_passed)
+                ui.flash_result(display, overall_passed, per_slot)
+
+                if overall_passed:
+                    print(f"{current_barcode} passed. Scan the next barcode.")
+                    current_barcode = None
+                    open_popup(popup, scanner)
+                else:
+                    # Reopen scanner input after a failure because SPACE is
+                    # no longer part of the workflow. _accept_barcode keeps
+                    # this part gated until its same barcode is scanned.
+                    open_popup(
+                        popup, scanner,
+                        error=f"FAIL - re-scan {current_barcode} to re-inspect")
+                continue
+
             # If the operator moves a slider, re-run the comparison on the
-            # last captured sample so results update without pressing SPACE
+            # last captured sample so tuning does not require another scan
             for slot, ref_proc in refs.items():
                 if slot in sample_crops:
                     live_results[slot] = compare(ref_proc, sample_crops[slot],
@@ -260,42 +306,6 @@ def main():  # pragma: no cover, drives real camera and GUI; logic lives in the 
                 ui.mouse["active_slot"] = int(chr(key))
                 ui.mouse["drawing"] = False
                 ui.mouse["roi_ready"] = False
-
-            elif key == ord(' '):
-                # Only inspect slots with both a region and a reference
-                # (an ROI can exist without a reference if the reference
-                # file was deleted between sessions)
-                active_refs = {s: r for s, r in refs.items() if s in rois}
-                if not active_refs:
-                    print("No references set. Press 1 or 2 to draw a region first.")
-                    continue
-                if current_barcode is None:
-                    open_popup(popup, scanner,
-                               error="Set a barcode before inspecting")
-                    continue
-
-                still, per_slot, overall_passed = run_inspection(
-                    cam, active_refs, rois, sample_crops, live_results,
-                    noise_thresh, diff_thresh)
-
-                # Rebuild the display from the inspection still now that
-                # live_results is updated, otherwise the saved image would
-                # show the previous inspection's results in the status bar
-                display = ui.draw_overlay(still.copy(), rois, refs,
-                                          live_results, thumbs,
-                                          current_barcode,
-                                          noise_thresh, diff_thresh)
-                storage.save_inspection(current_barcode, display,
-                                        per_slot, overall_passed)
-                ui.flash_result(display, overall_passed, per_slot)
-
-                # A pass advances the production line: clear the barcode and
-                # prompt for the next part. A fail keeps the same barcode so
-                # the operator re-inspects until it passes.
-                if overall_passed:
-                    print(f"{current_barcode} passed. Scan the next barcode.")
-                    current_barcode = None
-                    open_popup(popup, scanner)
 
     finally:
         # Always release the camera, scanner, and windows, even on exception

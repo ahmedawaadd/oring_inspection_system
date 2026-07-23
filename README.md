@@ -38,7 +38,7 @@ The test suite runs anywhere, no Pi required: hardware modules (`picamera2`, `ev
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest                # 104 tests, a second or two
+python -m pytest                # 109 tests, a second or two
 python -m pytest --cov=.        # with the 95% coverage gate used in CI
 ```
 
@@ -48,8 +48,8 @@ Test layout mirrors the source: `tests/test_vision.py` covers the comparison mat
 
 1. Press **`1`** or **`2`**, then click and drag on the live preview to draw a box around an O-ring. Let go, and the camera takes a high-resolution photo and saves it as the reference for that slot.
 2. On startup the tool asks for a barcode. Scan (or type) the part's barcode; it submits automatically once the full code is entered — no ENTER needed.
-3. Place the part under the camera and press **`SPACE`** to inspect. The tool compares the current view to the reference and shows **PASS** or **FAIL**.
-4. On a **FAIL**, the barcode stays put — re-inspect the same part until it passes. On a **PASS**, the tool prompts for the next barcode, so parts advance one at a time like a production line.
+3. Place the part under the camera and scan its barcode. Accepting the barcode immediately inspects the current view and shows **PASS** or **FAIL**.
+4. On a **FAIL**, the barcode stays put and the tool asks for the same barcode again before re-inspecting. On a **PASS**, it prompts for the next barcode, so parts advance one at a time like a production line.
 5. Press **`Q`** to quit.
 
 Use the two slider bars to tune sensitivity:
