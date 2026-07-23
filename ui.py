@@ -6,9 +6,9 @@ All OpenCV drawing and mouse input: overlay, popup, result banner."""
 import cv2
 import numpy as np
 
-from config import (ENGINEER_LOGIN_KEY_LABEL, ENGINEER_LOGOUT_KEY_LABEL,
-                    ENGINEER_SCAN_KEY_LABEL, GRAY, GREEN, RED, SLOT_COLORS,
-                    THUMB_H, THUMB_W, WHITE, WINDOW_NAME, YELLOW)
+from config import (ENGINEER_LOGOUT_KEY_LABEL, ENGINEER_SCAN_KEY_LABEL, GRAY,
+                    GREEN, RED, SLOT_COLORS, THUMB_H, THUMB_W, WHITE,
+                    WINDOW_NAME, YELLOW)
 
 # OpenCV's mouse callback can't return values to the main loop directly.
 # This shared dictionary is the workaround: both the callback and the
@@ -106,10 +106,7 @@ def draw_overlay(frame, rois, refs, live_results, thumbs, barcode,
         cv2.putText(frame, ctrl, (16, bar_y + 24),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.50, GRAY, 1, cv2.LINE_AA)
     else:
-        ctrl = (
-            "SCAN BARCODE: Inspect     "
-            f"{ENGINEER_LOGIN_KEY_LABEL}: Engineer login"
-        )
+        ctrl = "SCAN BARCODE: Inspect"
         cv2.putText(frame, ctrl, (16, bar_y + 24),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.50, GRAY, 1, cv2.LINE_AA)
 

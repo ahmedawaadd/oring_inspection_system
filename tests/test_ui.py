@@ -112,6 +112,7 @@ def test_threshold_values_are_hidden_from_operator(frame, monkeypatch):
     _overlay(frame.copy(), engineer_mode=False,
              noise_thresh=37, diff_thresh=6.4)
     assert not any(text.startswith("Noise ") for text in rendered)
+    assert not any("Engineer login" in text for text in rendered)
 
     rendered.clear()
     _overlay(frame.copy(), engineer_mode=True,
